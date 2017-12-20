@@ -22,15 +22,104 @@ import collections
 import functools
 import operator
 
-import tensorflow as tf
 
+import tensorflow as tf
+import math
+from abc import ABC, abstractmethod
+
+class Distribution(ABC):
+
+    @abstractmethod
+    def distribution_params_shape(self):
+        raise NotImplementedError()
+
+    def sample(self):
+        return self._dist.sample()
+
+    @abstractmethod
+    def logpdf(self, x):
+        raise NotImplementedError()
+
+    @abstractmethod
+    def max_likelihood(self):
+        raise NotImplementedError()
+
+    @abstractmethod
+    def entropy(self):
+        raise NotImplementedError()
+
+def getMultivariateNormalDiagClass(): #TODO: Is it possible to do this better?
+    return MultivariateNormalDiagDistribution
+
+class MultivariateNormalDiagDistribution(Distribution):
+    """
+    Wraps tf.contrib.distributions.MultivariateNormalDiagDistribution with methods used by PPO
+    """
+    def __init__(self, params):
+        self._mean, self._logstd = tf.split(params, 2, axis=2)
+        self._dist = tf.contrib.distributions.MultivariateNormalDiag(self._mean, tf.exp(self._logstd))
+        # self._action_size = action_size
+
+    @staticmethod
+    def distribution_params_shape(action_shape):
+        return (action_shape[:-1]) + (2*action_shape[-1],)
+
+    def max_likelihood(self):
+        return self._mean
+
+    def logpdf(self, x):
+        constant = -0.5 * math.log(2 * math.pi) - self._logstd
+        value = -0.5 * ((x - self._mean) / tf.exp(self._logstd)) ** 2
+        return tf.reduce_sum(constant + value, -1)
+
+    def entropy(self):
+        """Empirical entropy of a normal with diagonal covariance."""
+        constant = self._mean.shape[-1].value * math.log(2 * math.pi * math.e)
+        return (constant + tf.reduce_sum(2 * self._logstd, 1)) / 2
+
+    def kl(self, other_params):
+        mean1, logstd1 = tf.split(other_params, 2, axis=2)
+        logstd0_2, logstd1_2 = 2 * self._logstd, 2 * logstd1
+        return 0.5 * (
+            tf.reduce_sum(tf.exp(logstd0_2 - logstd1_2), -1) +
+            tf.reduce_sum((mean1 - self._mean) ** 2 / tf.exp(logstd1_2), -1) +
+            tf.reduce_sum(logstd1_2, -1) - tf.reduce_sum(logstd0_2, -1) -
+            self._mean.shape[-1].value)
+
+
+def getCategoricalClass():
+  return CategoricalDistibution
+
+class CategoricalDistibution(Distribution):
+
+    def __init__(self, params):
+        self._logits = params
+        self._dist = tf.contrib.distributions.Categorical(logits = self._logits)
+        # self._action_size = action_size
+
+    @staticmethod
+    def distribution_params_shape(action_shape):
+        return action_shape
+
+    def max_likelihood(self):
+        return tf.argmax(self._logits, axis=2, output_type=tf.int32)
+
+    def logpdf(self, x):
+        return self._dist.log_prob(x)
+
+    def entropy(self):
+        return self._dist.entropy()
+
+    def kl(self, other_params):
+        other_dist = tf.contrib.distributions.Categorical(other_params)
+        return tf.distributions.kl_divergence(self._dist, other_dist)
 
 NetworkOutput = collections.namedtuple(
-    'NetworkOutput', 'policy, mean, logstd, value, state')
+    'NetworkOutput', 'value, state, policy, distribution_params')
 
 
 def feed_forward_gaussian(
-    config, action_size, observations, unused_length, state=None):
+    config, action_shape, observations, unused_length, state=None):
   """Independent feed forward networks for policy and value.
 
   The policy network outputs the mean action and the log standard deviation
@@ -52,12 +141,13 @@ def feed_forward_gaussian(
   flat_observations = tf.reshape(observations, [
       tf.shape(observations)[0], tf.shape(observations)[1],
       functools.reduce(operator.mul, observations.shape.as_list()[2:], 1)])
+
   with tf.variable_scope('policy'):
     x = flat_observations
     for size in config.policy_layers:
       x = tf.contrib.layers.fully_connected(x, size, tf.nn.relu)
     mean = tf.contrib.layers.fully_connected(
-        x, action_size, tf.tanh,
+        x, action_shape[1], tf.tanh,
         weights_initializer=mean_weights_initializer)
     logstd = tf.get_variable(
         'logstd', mean.shape[2:], tf.float32, logstd_initializer)
@@ -72,9 +162,55 @@ def feed_forward_gaussian(
   mean = tf.check_numerics(mean, 'mean')
   logstd = tf.check_numerics(logstd, 'logstd')
   value = tf.check_numerics(value, 'value')
-  policy = tf.contrib.distributions.MultivariateNormalDiag(
-      mean, tf.exp(logstd))
-  return NetworkOutput(policy, mean, logstd, value, state)
+  distribution_params = tf.concat([mean, logstd], axis=2)
+  policy = MultivariateNormalDiagDistribution(distribution_params)
+
+  return NetworkOutput(value, state, policy, distribution_params)
+
+
+def feed_forward_categorical(
+    config, action_shape, observations, unused_length, state=None):
+  """Independent feed forward networks for policy and value.
+
+  The policy network outputs the mean action and the log standard deviation
+  is learned as independent parameter vector.
+
+  Args:
+    config: Configuration object.
+    action_size: Length of the action vector.
+    observations: Sequences of observations.
+    unused_length: Batch of sequence lengths.
+    state: Batch of initial recurrent states.
+
+  Returns:
+    NetworkOutput tuple.
+  """
+
+  x = tf.reshape(observations, [-1]+ observations.shape.as_list()[2:])
+
+  with tf.variable_scope('policy'):
+    x = tf.to_float(x)/255.0
+    x = tf.contrib.layers.conv2d(x, 32, [5, 5], [1, 1], activation_fn= tf.nn.relu, padding="SAME")
+    x = tf.contrib.layers.max_pool2d(x, [2, 2], padding="VALID")
+    x = tf.contrib.layers.conv2d(x, 32, [5, 5], [1, 1], activation_fn=tf.nn.relu, padding="SAME")
+    x = tf.contrib.layers.max_pool2d(x, [2, 2], padding="VALID")
+    x = tf.contrib.layers.conv2d(x, 64, [4, 4], [1, 1], activation_fn=tf.nn.relu, padding="SAME")
+    x = tf.contrib.layers.max_pool2d(x, [2, 2], padding="VALID")
+    x = tf.contrib.layers.conv2d(x, 64, [3, 3], [1, 1], activation_fn=tf.nn.relu, padding="SAME")
+
+    flat_x = tf.reshape(x, [
+      tf.shape(observations)[0], tf.shape(observations)[1],
+      functools.reduce(operator.mul, x.shape.as_list()[1:], 1)])
+
+    x = tf.contrib.layers.fully_connected(flat_x, 128, tf.nn.relu)
+
+    logits = tf.contrib.layers.fully_connected(x, action_shape[1], activation_fn=None)
+
+    value = tf.contrib.layers.fully_connected(x, 1, activation_fn=None)[..., 0]
+
+  policy = CategoricalDistibution(logits)
+
+  return NetworkOutput(value, state, policy, logits)
 
 
 def recurrent_gaussian(
