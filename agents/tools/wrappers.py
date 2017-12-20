@@ -22,11 +22,13 @@ import atexit
 import multiprocessing
 import sys
 import traceback
+from collections import deque
 
 import gym
 import gym.spaces
 import numpy as np
 import tensorflow as tf
+from gym import spaces
 
 
 class AutoReset(object):
@@ -116,9 +118,7 @@ class FrameHistory(object):
       raise KeyError('Past indices should include 0 for the current frame.')
     self._env = env
     self._past_indices = past_indices
-    self._step = 0
-    self._buffer = None
-    self._capacity = max(past_indices)
+    self._buffer = deque([], maxlen=max(past_indices)+1)
     self._flatten = flatten
 
   def __getattr__(self, name):
@@ -128,32 +128,31 @@ class FrameHistory(object):
   def observation_space(self):
     low = self._env.observation_space.low
     high = self._env.observation_space.high
-    low = np.repeat(low[None, ...], len(self._past_indices), 0)
-    high = np.repeat(high[None, ...], len(self._past_indices), 0)
-    if self._flatten:
-      low = np.reshape(low, (-1,) + low.shape[2:])
-      high = np.reshape(high, (-1,) + high.shape[2:])
+    if not self._flatten:
+      low = low[..., None]
+      high = high[..., None]
+    low = np.repeat(low, len(self._past_indices), axis=-1)
+    high = np.repeat(high, len(self._past_indices), axis=-1)
     return gym.spaces.Box(low, high)
 
   def step(self, action):
     observ, reward, done, info = self._env.step(action)
-    self._step += 1
-    self._buffer[self._step % self._capacity] = observ
+    self._buffer.append(observ)
     observ = self._select_frames()
     return observ, reward, done, info
 
   def reset(self):
     observ = self._env.reset()
-    self._buffer = np.repeat(observ[None, ...], self._capacity, 0)
-    self._step = 0
+    for _ in range(self._buffer.maxlen):
+      self._buffer.append(observ)
     return self._select_frames()
 
   def _select_frames(self):
-    indices = [
-        (self._step - index) % self._capacity for index in self._past_indices]
-    observ = self._buffer[indices]
+    observ = [self._buffer[i] for i in self._past_indices]
     if self._flatten:
-      observ = np.reshape(observ, (-1,) + observ.shape[2:])
+      observ = np.concatenate([self._buffer[i] for i in self._past_indices], axis=-1)
+    else:
+      np.stack([self._buffer[i] for i in self._past_indices], axis=-1)
     return observ
 
 
@@ -556,3 +555,24 @@ class ConvertTo32Bit(object):
     if not np.isfinite(reward).all():
       raise ValueError('Infinite reward encountered.')
     return np.array(reward, dtype=np.float32)
+
+
+class Shrink(gym.Wrapper):
+  """Shiring the frame for the sake of effiency"""
+  def __init__(self, env):
+    import math
+    gym.Wrapper.__init__(self, env)
+    shp = env.observation_space.shape
+    self.observation_space = spaces.Box(low=0, high=255, shape=(math.floor(shp[0]/2), math.floor(shp[1]/2), 1))
+
+  def reset(self):
+    ob = self.env.reset()
+    return self._filter(ob)
+
+  def _step(self, action):
+    ob, reward, done, info = self.env.step(action)
+    return self._filter(ob), reward, done, info
+
+  def _filter(self, ob):
+    res = ob[::2, ::2, 0:1]
+    return res

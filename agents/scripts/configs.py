@@ -19,10 +19,10 @@ from __future__ import division
 from __future__ import print_function
 
 # pylint: disable=unused-variable
-
+import gym
 import tensorflow as tf
 
-from agents import ppo
+from agents import ppo, tools
 from agents.scripts import networks
 
 
@@ -35,11 +35,14 @@ def default():
   use_gpu = True
   # Network
   network = networks.feed_forward_gaussian
+  distribution_class = networks.getMultivariateNormalDiagClass
   weight_summaries = dict(
       all=r'.*', policy=r'.*/policy/.*', value=r'.*/value/.*')
   policy_layers = 200, 100
   value_layers = 200, 100
   init_mean_factor = 0.1
+  continuous_preprocessing = True
+  normalize_observations = True
   init_logstd = -1
   # Optimization
   update_every = 30
@@ -53,6 +56,47 @@ def default():
   kl_cutoff_coef = 1000
   kl_init_penalty = 1
   return locals()
+
+def default_atari():
+  """Default configuration for PPO."""
+  # General
+  algorithm = ppo.PPOAlgorithm
+  num_agents = 30
+  continuous_preprocessing = False
+  normalize_observations = False
+  eval_episodes = 30
+  use_gpu = False
+  # Network
+  network = networks.feed_forward_categorical
+  distribution_class = networks.getCategoricalClass
+  weight_summaries = dict(
+      all=r'.*', policy=r'.*/policy/.*', value=r'.*/value/.*')
+  # Optimization
+  update_every = 10
+  update_epochs = 24
+  optimizer = tf.train.AdamOptimizer
+  learning_rate = 1e-3
+  # Losses
+  discount = 0.995
+  kl_target = 1e-2
+  kl_cutoff_factor = 2
+  kl_cutoff_coef = 1000
+  kl_init_penalty = 1
+  return locals()
+
+def pong():
+  """Configuration for the pendulum classic control task."""
+  locals().update(default_atari())
+  num_agents = 5
+  update_every = 10
+  update_epochs = 4
+  learning_rate = 1e-2
+  # Environment
+  env = lambda: tools.wrappers.FrameHistory(tools.wrappers.Shrink(gym.make("Pong-v0")), past_indices=range(0, 2), flatten=True)
+  max_length = 300
+  steps = 2e6  # 2M
+  return locals()
+
 
 
 def pendulum():

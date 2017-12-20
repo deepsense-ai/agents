@@ -49,9 +49,10 @@ def _create_environment(config):
     env = config.env()
   if config.max_length:
     env = tools.wrappers.LimitDuration(env, config.max_length)
-  env = tools.wrappers.RangeNormalize(env)
-  env = tools.wrappers.ClipAction(env)
-  env = tools.wrappers.ConvertTo32Bit(env)
+  if config.continuous_preprocessing:
+    env = tools.wrappers.RangeNormalize(env)
+    env = tools.wrappers.ClipAction(env)
+    env = tools.wrappers.ConvertTo32Bit(env)
   return env
 
 

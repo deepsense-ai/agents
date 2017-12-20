@@ -38,9 +38,12 @@ class InGraphBatchEnv(object):
     """
     self._batch_env = batch_env
     observ_shape = self._parse_shape(self._batch_env.observation_space)
-    observ_dtype = self._parse_dtype(self._batch_env.observation_space)
     action_shape = self._parse_shape(self._batch_env.action_space)
     action_dtype = self._parse_dtype(self._batch_env.action_space)
+    if action_dtype == tf.int32:
+      observ_dtype = tf.uint8
+    else:
+      observ_dtype = action_dtype
     with tf.variable_scope('env_temporary'):
       self._observ = tf.Variable(
           tf.zeros((len(self._batch_env),) + observ_shape, observ_dtype),
@@ -88,11 +91,10 @@ class InGraphBatchEnv(object):
     with tf.name_scope('environment/simulate'):
       if action.dtype in (tf.float16, tf.float32, tf.float64):
         action = tf.check_numerics(action, 'action')
-      observ_dtype = self._parse_dtype(self._batch_env.observation_space)
+      observ_dtype = self._observ.dtype
       observ, reward, done = tf.py_func(
           lambda a: self._batch_env.step(a)[:3], [action],
           [observ_dtype, tf.float32, tf.bool], name='step')
-      observ = tf.check_numerics(observ, 'observ')
       reward = tf.check_numerics(reward, 'reward')
       return tf.group(
           self._observ.assign(observ),
@@ -111,10 +113,9 @@ class InGraphBatchEnv(object):
     """
     if indices is None:
       indices = tf.range(len(self._batch_env))
-    observ_dtype = self._parse_dtype(self._batch_env.observation_space)
+    observ_dtype = self._observ.dtype
     observ = tf.py_func(
         self._batch_env.reset, [indices], observ_dtype, name='reset')
-    observ = tf.check_numerics(observ, 'observ')
     reward = tf.zeros_like(indices, tf.float32)
     done = tf.zeros_like(indices, tf.bool)
     with tf.control_dependencies([
@@ -160,6 +161,23 @@ class InGraphBatchEnv(object):
       return ()
     if isinstance(space, gym.spaces.Box):
       return space.shape
+    raise NotImplementedError()
+
+
+  def get_distribution_space_shape(self):
+    space = self._batch_env.action_space
+    if isinstance(space, gym.spaces.Discrete):
+      return (len(self._batch_env),)+ (space.n,)
+    if isinstance(space, gym.spaces.Box):
+      return (len(self._batch_env),) + space.shape
+    raise NotImplementedError()
+
+  def get_action_space_shape(self):
+    space = self._batch_env.action_space
+    if isinstance(space, gym.spaces.Discrete):
+      return (len(self._batch_env),)
+    if isinstance(space, gym.spaces.Box):
+      return (len(self._batch_env),) + space.shape
     raise NotImplementedError()
 
   def _parse_dtype(self, space):

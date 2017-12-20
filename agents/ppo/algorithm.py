@@ -49,26 +49,38 @@ class PPOAlgorithm(object):
     self._is_training = is_training
     self._should_log = should_log
     self._config = config
-    self._observ_filter = normalize.StreamingNormalize(
-        self._batch_env.observ[0], center=True, scale=True, clip=5,
-        name='normalize_observ')
+    if self._config.normalize_observations:
+      self._observ_filter = normalize.StreamingNormalize(
+          self._batch_env.observ[0], center=True, scale=True, clip=5,
+          name='normalize_observ')
     self._reward_filter = normalize.StreamingNormalize(
         self._batch_env.reward[0], center=False, scale=True, clip=10,
         name='normalize_reward')
-    # Memory stores tuple of observ, action, mean, logstd, reward.
+
+    action_space_shape = self._batch_env.get_action_space_shape()
+    distribution_space_shape = self._batch_env.get_distribution_space_shape()
+    # action_shape = tuple(map(lambda x: x.value, list(self._batch_env.action.shape)))
+    dist_params_shape = self._config.distribution_class().distribution_params_shape(distribution_space_shape)
+
+    self._last_distribution_params = tf.Variable(tf.zeros(shape=dist_params_shape),
+                                                 False, name='last_distribution_params')
+
+    # Memory stores tuple of observ, action, distribution_params, reward.
     template = (
-        self._batch_env.observ[0], self._batch_env.action[0],
-        self._batch_env.action[0], self._batch_env.action[0],
-        self._batch_env.reward[0])
+        self._batch_env.observ[0], self._batch_env.action[0], self._last_distribution_params[0], self._batch_env.reward[0]
+    )
     self._memory = memory.EpisodeMemory(
         template, config.update_every, config.max_length, 'memory')
+
     self._memory_index = tf.Variable(0, False)
     use_gpu = self._config.use_gpu and utility.available_gpus()
     with tf.device('/gpu:0' if use_gpu else '/cpu:0'):
       # Create network variables for later calls to reuse.
-      action_size = self._batch_env.action.shape[1].value
+      # action_size = self._batch_env.action.shape[1].value
+      # action_shape = tuple(map(lambda x:x.value, list(self._batch_env.action.shape)))
+      # self._distribution_factory = lambda distribution_parmas: config.distribution_class()(distribution_parmas, action_shape)
       self._network = tf.make_template(
-          'network', functools.partial(config.network, config, action_size))
+          'network', functools.partial(config.network, config, distribution_space_shape))
       output = self._network(
           tf.zeros_like(self._batch_env.observ)[:, None],
           tf.ones(len(self._batch_env)))
@@ -76,6 +88,7 @@ class PPOAlgorithm(object):
       with tf.variable_scope('ppo_temporary'):
         self._episodes = memory.EpisodeMemory(
             template, len(batch_env), config.max_length, 'episodes')
+
         if output.state is None:
           self._last_state = None
         else:
@@ -89,12 +102,9 @@ class PPOAlgorithm(object):
               output.state)
         self._last_action = tf.Variable(
             tf.zeros_like(self._batch_env.action), False, name='last_action')
-        self._last_mean = tf.Variable(
-            tf.zeros_like(self._batch_env.action), False, name='last_mean')
-        self._last_logstd = tf.Variable(
-            tf.zeros_like(self._batch_env.action), False, name='last_logstd')
-      self._penalty = tf.Variable(
-          self._config.kl_init_penalty, False, dtype=tf.float32)
+
+    self._penalty = tf.Variable(
+        self._config.kl_init_penalty, False, dtype=tf.float32)
 
   def begin_episode(self, agent_indices):
     """Reset the recurrent states and stored episode.
@@ -126,39 +136,44 @@ class PPOAlgorithm(object):
       Tuple of action batch tensor and summary tensor.
     """
     with tf.name_scope('perform/'):
-      observ = self._observ_filter.transform(observ)
+      if self._config.normalize_observations:
+        observ = self._observ_filter.transform(observ)
       if self._last_state is None:
         state = None
       else:
         state = tf.contrib.framework.nest.map_structure(
             lambda x: tf.gather(x, agent_indices), self._last_state)
       use_gpu = self._config.use_gpu and utility.available_gpus()
+
       with tf.device('/gpu:0' if use_gpu else '/cpu:0'):
         output = self._network(observ[:, None], tf.ones(observ.shape[0]), state)
       action = tf.cond(
-          self._is_training, output.policy.sample, lambda: output.mean)
-      logprob = output.policy.log_prob(action)[:, 0]
+          self._is_training, output.policy.sample, output.policy.max_likelihood)
+
+      # logprob = output.policy.log_prob(action)[:, 0]
       # pylint: disable=g-long-lambda
       summary = tf.cond(self._should_log, lambda: tf.summary.merge([
-          tf.summary.histogram('mean', output.mean[:, 0]),
-          tf.summary.histogram('std', tf.exp(output.logstd[:, 0])),
+          # tf.summary.histogram('mean', output.mean[:, 0]),#TODO: possibly log something useful
+          # tf.summary.histogram('std', tf.exp(output.logstd[:, 0])),
           tf.summary.histogram('action', action[:, 0]),
-          tf.summary.histogram('logprob', logprob)]), str)
+          # tf.summary.histogram('logprob', logprob)
+      ]), str)
       # Remember current policy to append to memory in the experience callback.
       if self._last_state is None:
         assign_state = tf.no_op()
       else:
         assign_state = utility.assign_nested_vars(
             self._last_state, output.state, agent_indices)
+
       with tf.control_dependencies([
-          assign_state,
+          assign_state, agent_indices,
           tf.scatter_update(
               self._last_action, agent_indices, action[:, 0]),
           tf.scatter_update(
-              self._last_mean, agent_indices, output.mean[:, 0]),
-          tf.scatter_update(
-              self._last_logstd, agent_indices, output.logstd[:, 0])]):
-        return tf.check_numerics(action[:, 0], 'action'), tf.identity(summary)
+              self._last_distribution_params, agent_indices, output.distribution_params[:, 0]
+          )
+      ]):
+        return action[:, 0], tf.identity(summary)
 
   def experience(
       self, agent_indices, observ, action, reward, unused_done, unused_nextob):
@@ -188,24 +203,31 @@ class PPOAlgorithm(object):
 
   def _define_experience(self, agent_indices, observ, action, reward):
     """Implement the branch of experience() entered during training."""
-    update_filters = tf.summary.merge([
+    if self._config.normalize_observations:
+      update_filters = tf.summary.merge([
         self._observ_filter.update(observ),
         self._reward_filter.update(reward)])
+    else:
+      update_filters = tf.summary.merge([
+        self._reward_filter.update(reward)])
+
     with tf.control_dependencies([update_filters]):
       if self._config.train_on_agent_action:
         # NOTE: Doesn't seem to change much.
         action = self._last_action
-      batch = (
-          observ, action, tf.gather(self._last_mean, agent_indices),
-          tf.gather(self._last_logstd, agent_indices), reward)
+
+      batch = (observ, action, tf.gather(self._last_distribution_params, agent_indices), reward)
       append = self._episodes.append(batch, agent_indices)
-    with tf.control_dependencies([append]):
-      norm_observ = self._observ_filter.transform(observ)
+    with tf.control_dependencies([ append]):
+      if self._config.normalize_observations:
+        norm_observ = self._observ_filter.transform(observ)
+      else:
+        norm_observ = observ
       norm_reward = tf.reduce_mean(self._reward_filter.transform(reward))
       # pylint: disable=g-long-lambda
       summary = tf.cond(self._should_log, lambda: tf.summary.merge([
           update_filters,
-          self._observ_filter.summary(),
+          # self._observ_filter.summary(),
           self._reward_filter.summary(),
           tf.summary.scalar('memory_size', self._memory_index),
           tf.summary.histogram('normalized_observ', norm_observ),
@@ -264,19 +286,19 @@ class PPOAlgorithm(object):
             self._memory_index, self._config.update_every)
         with tf.control_dependencies([assert_full]):
           data = self._memory.data()
-        (observ, action, old_mean, old_logstd, reward), length = data
+          (observ, action, old_distribution_params, reward), length = data
         with tf.control_dependencies([tf.assert_greater(length, 0)]):
           length = tf.identity(length)
-        observ = self._observ_filter.transform(observ)
+        if self._config.normalize_observations:
+          observ = self._observ_filter.transform(observ)
         reward = self._reward_filter.transform(reward)
-        update_summary = self._perform_update_steps(
-            observ, action, old_mean, old_logstd, reward, length)
+        update_summary = self._perform_update_steps(observ, action, old_distribution_params, reward, length)
         with tf.control_dependencies([update_summary]):
           penalty_summary = self._adjust_penalty(
-              observ, old_mean, old_logstd, length)
+              observ, old_distribution_params, length)
         with tf.control_dependencies([penalty_summary]):
           clear_memory = tf.group(
-              self._memory.clear(), self._memory_index.assign(0))
+            self._memory.clear(), self._memory_index.assign(0))
         with tf.control_dependencies([clear_memory]):
           weight_summary = utility.variable_summaries(
               tf.trainable_variables(), self._config.weight_summaries)
@@ -284,7 +306,7 @@ class PPOAlgorithm(object):
               update_summary, penalty_summary, weight_summary])
 
   def _perform_update_steps(
-      self, observ, action, old_mean, old_logstd, reward, length):
+      self, observ, action, old_distribution_params, reward, length):
     """Perform multiple update steps of value function and policy.
 
     The advantage is computed once at the beginning and shared across
@@ -305,6 +327,7 @@ class PPOAlgorithm(object):
     return_ = utility.discounted_return(
         reward, length, self._config.discount)
     value = self._network(observ, length).value
+
     if self._config.gae_lambda:
       advantage = utility.lambda_return(
           reward, value, length, self._config.discount,
@@ -321,8 +344,7 @@ class PPOAlgorithm(object):
         'normalized advantage: ')
     # pylint: disable=g-long-lambda
     value_loss, policy_loss, summary = tf.scan(
-        lambda _1, _2: self._update_step(
-            observ, action, old_mean, old_logstd, reward, advantage, length),
+        lambda _1, _2: self._update_step(observ, action, old_distribution_params, reward, advantage, length),
         tf.range(self._config.update_epochs),
         [0., 0., ''], parallel_iterations=1)
     print_losses = tf.group(
@@ -332,7 +354,7 @@ class PPOAlgorithm(object):
       return summary[self._config.update_epochs // 2]
 
   def _update_step(
-      self, observ, action, old_mean, old_logstd, reward, advantage, length):
+      self, observ, action, old_distribution_params, reward, advantage, length):
     """Compute the current combined loss and perform a gradient update step.
 
     Args:
@@ -349,9 +371,8 @@ class PPOAlgorithm(object):
     """
     value_loss, value_summary = self._value_loss(observ, reward, length)
     network = self._network(observ, length)
-    policy_loss, policy_summary = self._policy_loss(
-        network.mean, network.logstd, old_mean, old_logstd, action,
-        advantage, length)
+    policy_loss, policy_summary = self._policy_loss(network.distribution_params, old_distribution_params,
+                                                    action, advantage, length)
     value_gradients, value_variables = (
         zip(*self._optimizer.compute_gradients(value_loss)))
     policy_gradients, policy_variables = (
@@ -400,7 +421,8 @@ class PPOAlgorithm(object):
       return tf.check_numerics(value_loss, 'value_loss'), summary
 
   def _policy_loss(
-      self, mean, logstd, old_mean, old_logstd, action, advantage, length):
+      self, distribution_params,
+          old_distribution_params, action, advantage, length):
     """Compute the policy loss composed of multiple components.
 
     1. The policy gradient loss is importance sampled from the data-collecting
@@ -423,12 +445,14 @@ class PPOAlgorithm(object):
       Tuple of loss tensor and summary tensor.
     """
     with tf.name_scope('policy_loss'):
-      entropy = utility.diag_normal_entropy(mean, logstd)
-      kl = tf.reduce_mean(self._mask(utility.diag_normal_kl(
-          old_mean, old_logstd, mean, logstd), length), 1)
-      policy_gradient = tf.exp(
-          utility.diag_normal_logpdf(mean, logstd, action) -
-          utility.diag_normal_logpdf(old_mean, old_logstd, action))
+      new_distribution = self._config.distribution_class()(distribution_params)
+      old_distribution = self._config.distribution_class()(old_distribution_params)
+
+      entropy = new_distribution.entropy()
+      kl = tf.reduce_mean(self._mask(old_distribution.kl(distribution_params), length), 1)
+
+      policy_gradient = tf.exp(new_distribution.logpdf(action) - old_distribution.logpdf(action))
+
       surrogate_loss = -tf.reduce_mean(self._mask(
           policy_gradient * tf.stop_gradient(advantage), length), 1)
       kl_penalty = self._penalty * kl
@@ -457,7 +481,7 @@ class PPOAlgorithm(object):
       policy_loss = tf.reduce_mean(policy_loss, 0)
       return tf.check_numerics(policy_loss, 'policy_loss'), summary
 
-  def _adjust_penalty(self, observ, old_mean, old_logstd, length):
+  def _adjust_penalty(self, observ, old_distribution_params, length):
     """Adjust the KL policy between the behavioral and current policy.
 
     Compute how much the policy actually changed during the multiple
@@ -476,12 +500,14 @@ class PPOAlgorithm(object):
     with tf.name_scope('adjust_penalty'):
       network = self._network(observ, length)
       assert_change = tf.assert_equal(
-          tf.reduce_all(tf.equal(network.mean, old_mean)), False,
+          tf.reduce_all(tf.equal(network.distribution_params, old_distribution_params)), False,
           message='policy should change')
       print_penalty = tf.Print(0, [self._penalty], 'current penalty: ')
       with tf.control_dependencies([assert_change, print_penalty]):
-        kl_change = tf.reduce_mean(self._mask(utility.diag_normal_kl(
-            old_mean, old_logstd, network.mean, network.logstd), length))
+        old_distribution = self._config.distribution_class()(old_distribution_params)
+        kl_change = tf.reduce_mean(self._mask(old_distribution.kl(network.distribution_params), length))
+        # kl_change = tf.reduce_mean(self._mask(utility.diag_normal_kl(
+        #     old_mean, old_logstd, network.mean, network.logstd), length))
         kl_change = tf.Print(kl_change, [kl_change], 'kl change: ')
         maybe_increase = tf.cond(
             kl_change > 1.3 * self._config.kl_target,
