@@ -76,9 +76,6 @@ class PPOAlgorithm(object):
     use_gpu = self._config.use_gpu and utility.available_gpus()
     with tf.device('/gpu:0' if use_gpu else '/cpu:0'):
       # Create network variables for later calls to reuse.
-      # action_size = self._batch_env.action.shape[1].value
-      # action_shape = tuple(map(lambda x:x.value, list(self._batch_env.action.shape)))
-      # self._distribution_factory = lambda distribution_parmas: config.distribution_class()(distribution_parmas, action_shape)
       self._network = tf.make_template(
           'network', functools.partial(config.network, config, distribution_space_shape))
       output = self._network(
@@ -88,7 +85,6 @@ class PPOAlgorithm(object):
       with tf.variable_scope('ppo_temporary'):
         self._episodes = memory.EpisodeMemory(
             template, len(batch_env), config.max_length, 'episodes')
-
         if output.state is None:
           self._last_state = None
         else:
@@ -144,19 +140,18 @@ class PPOAlgorithm(object):
         state = tf.contrib.framework.nest.map_structure(
             lambda x: tf.gather(x, agent_indices), self._last_state)
       use_gpu = self._config.use_gpu and utility.available_gpus()
-
       with tf.device('/gpu:0' if use_gpu else '/cpu:0'):
         output = self._network(observ[:, None], tf.ones(observ.shape[0]), state)
       action = tf.cond(
           self._is_training, output.policy.sample, output.policy.max_likelihood)
 
-      # logprob = output.policy.log_prob(action)[:, 0]
+      logprob = output.policy.logpdf(action)[:, 0]
       # pylint: disable=g-long-lambda
       summary = tf.cond(self._should_log, lambda: tf.summary.merge([
-          # tf.summary.histogram('mean', output.mean[:, 0]),#TODO: possibly log something useful
+          # tf.summary.histogram('mean', output.mean[:, 0]),  # TODO: possibly log something useful
           # tf.summary.histogram('std', tf.exp(output.logstd[:, 0])),
           tf.summary.histogram('action', action[:, 0]),
-          # tf.summary.histogram('logprob', logprob)
+          tf.summary.histogram('logprob', logprob)
       ]), str)
       # Remember current policy to append to memory in the experience callback.
       if self._last_state is None:
@@ -227,12 +222,12 @@ class PPOAlgorithm(object):
       # pylint: disable=g-long-lambda
       summary = tf.cond(self._should_log, lambda: tf.summary.merge([
           update_filters,
-          # self._observ_filter.summary(),
           self._reward_filter.summary(),
           tf.summary.scalar('memory_size', self._memory_index),
           tf.summary.histogram('normalized_observ', norm_observ),
           tf.summary.histogram('action', self._last_action),
-          tf.summary.scalar('normalized_reward', norm_reward)]), str)
+          tf.summary.scalar('normalized_reward', norm_reward)]
+          + ([self._observ_filter.summary()] if self._config.normalize_observations else [])), str)
       return summary
 
   def end_episode(self, agent_indices):
@@ -316,8 +311,7 @@ class PPOAlgorithm(object):
     Args:
       observ: Sequences of observations.
       action: Sequences of actions.
-      old_mean: Sequences of action means of the behavioral policy.
-      old_logstd: Sequences of action log stddevs of the behavioral policy.
+      old_distribution_params: Sequences of distribution parameters of the behavioral policy.
       reward: Sequences of rewards.
       length: Batch of sequence lengths.
 
@@ -360,8 +354,7 @@ class PPOAlgorithm(object):
     Args:
       observ: Sequences of observations.
       action: Sequences of actions.
-      old_mean: Sequences of action means of the behavioral policy.
-      old_logstd: Sequences of action log stddevs of the behavioral policy.
+      old_distribution_params: Sequences of distribution parameters of the behavioral policy.
       reward: Sequences of reward.
       advantage: Sequences of advantages.
       length: Batch of sequence lengths.
@@ -433,10 +426,8 @@ class PPOAlgorithm(object):
        amount, we activate a strong penalty discouraging further divergence.
 
     Args:
-      mean: Sequences of action means of the current policy.
-      logstd: Sequences of action log stddevs of the current policy.
-      old_mean: Sequences of action means of the behavioral policy.
-      old_logstd: Sequences of action log stddevs of the behavioral policy.
+      distribution_params: Sequences of distribution parameters of the current policy.
+      old_distribution_params: Sequences of distribution parameters of the behavioral policy.
       action: Sequences of actions.
       advantage: Sequences of advantages.
       length: Batch of sequence lengths.
@@ -449,7 +440,7 @@ class PPOAlgorithm(object):
       old_distribution = self._config.distribution_class()(old_distribution_params)
 
       entropy = new_distribution.entropy()
-      kl = tf.reduce_mean(self._mask(old_distribution.kl(distribution_params), length), 1)
+      kl = tf.reduce_mean(self._mask(old_distribution.kl(new_distribution), length), 1)
 
       policy_gradient = tf.exp(new_distribution.logpdf(action) - old_distribution.logpdf(action))
 
@@ -490,8 +481,7 @@ class PPOAlgorithm(object):
 
     Args:
       observ: Sequences of observations.
-      old_mean: Sequences of action means of the behavioral policy.
-      old_logstd: Sequences of action log stddevs of the behavioral policy.
+      old_distribution_params: Sequences of distribution parameters of the behavioral policy.
       length: Batch of sequence lengths.
 
     Returns:
@@ -505,9 +495,7 @@ class PPOAlgorithm(object):
       print_penalty = tf.Print(0, [self._penalty], 'current penalty: ')
       with tf.control_dependencies([assert_change, print_penalty]):
         old_distribution = self._config.distribution_class()(old_distribution_params)
-        kl_change = tf.reduce_mean(self._mask(old_distribution.kl(network.distribution_params), length))
-        # kl_change = tf.reduce_mean(self._mask(utility.diag_normal_kl(
-        #     old_mean, old_logstd, network.mean, network.logstd), length))
+        kl_change = tf.reduce_mean(self._mask(old_distribution.kl(network.policy), length))
         kl_change = tf.Print(kl_change, [kl_change], 'kl change: ')
         maybe_increase = tf.cond(
             kl_change > 1.3 * self._config.kl_target,

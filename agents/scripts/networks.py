@@ -48,6 +48,10 @@ class Distribution(ABC):
     def entropy(self):
         raise NotImplementedError()
 
+    def kl(self, other_distribution):
+        return tf.distributions.kl_divergence(self._dist, other_distribution._dist)
+
+
 def getMultivariateNormalDiagClass(): #TODO: Is it possible to do this better?
     return MultivariateNormalDiagDistribution
 
@@ -77,15 +81,6 @@ class MultivariateNormalDiagDistribution(Distribution):
         constant = self._mean.shape[-1].value * math.log(2 * math.pi * math.e)
         return (constant + tf.reduce_sum(2 * self._logstd, 1)) / 2
 
-    def kl(self, other_params):
-        mean1, logstd1 = tf.split(other_params, 2, axis=2)
-        logstd0_2, logstd1_2 = 2 * self._logstd, 2 * logstd1
-        return 0.5 * (
-            tf.reduce_sum(tf.exp(logstd0_2 - logstd1_2), -1) +
-            tf.reduce_sum((mean1 - self._mean) ** 2 / tf.exp(logstd1_2), -1) +
-            tf.reduce_sum(logstd1_2, -1) - tf.reduce_sum(logstd0_2, -1) -
-            self._mean.shape[-1].value)
-
 
 def getCategoricalClass():
   return CategoricalDistibution
@@ -110,9 +105,6 @@ class CategoricalDistibution(Distribution):
     def entropy(self):
         return self._dist.entropy()
 
-    def kl(self, other_params):
-        other_dist = tf.contrib.distributions.Categorical(other_params)
-        return tf.distributions.kl_divergence(self._dist, other_dist)
 
 NetworkOutput = collections.namedtuple(
     'NetworkOutput', 'value, state, policy, distribution_params')
