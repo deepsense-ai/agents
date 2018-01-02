@@ -41,7 +41,7 @@ class InGraphBatchEnv(object):
     action_shape = self._parse_shape(self._batch_env.action_space)
     action_dtype = self._parse_dtype(self._batch_env.action_space)
     if action_dtype == tf.int32:
-      observ_dtype = tf.uint8
+      observ_dtype = tf.int32
     else:
       observ_dtype = action_dtype
     with tf.variable_scope('env_temporary'):

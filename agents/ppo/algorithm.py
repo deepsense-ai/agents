@@ -76,6 +76,9 @@ class PPOAlgorithm(object):
     use_gpu = self._config.use_gpu and utility.available_gpus()
     with tf.device('/gpu:0' if use_gpu else '/cpu:0'):
       # Create network variables for later calls to reuse.
+      # action_size = self._batch_env.action.shape[1].value
+      # action_shape = tuple(map(lambda x:x.value, list(self._batch_env.action.shape)))
+      # self._distribution_factory = lambda distribution_parmas: config.distribution_class()(distribution_parmas, action_shape)
       self._network = tf.make_template(
           'network', functools.partial(config.network, config, distribution_space_shape))
       output = self._network(
@@ -85,6 +88,7 @@ class PPOAlgorithm(object):
       with tf.variable_scope('ppo_temporary'):
         self._episodes = memory.EpisodeMemory(
             template, len(batch_env), config.max_length, 'episodes')
+
         if output.state is None:
           self._last_state = None
         else:
@@ -140,18 +144,19 @@ class PPOAlgorithm(object):
         state = tf.contrib.framework.nest.map_structure(
             lambda x: tf.gather(x, agent_indices), self._last_state)
       use_gpu = self._config.use_gpu and utility.available_gpus()
+
       with tf.device('/gpu:0' if use_gpu else '/cpu:0'):
         output = self._network(observ[:, None], tf.ones(observ.shape[0]), state)
       action = tf.cond(
           self._is_training, output.policy.sample, output.policy.max_likelihood)
 
-      logprob = output.policy.logpdf(action)[:, 0]
+      # logprob = output.policy.log_prob(action)[:, 0]
       # pylint: disable=g-long-lambda
       summary = tf.cond(self._should_log, lambda: tf.summary.merge([
-          # tf.summary.histogram('mean', output.mean[:, 0]),  # TODO: possibly log something useful
+          # tf.summary.histogram('mean', output.mean[:, 0]),#TODO: possibly log something useful
           # tf.summary.histogram('std', tf.exp(output.logstd[:, 0])),
           tf.summary.histogram('action', action[:, 0]),
-          tf.summary.histogram('logprob', logprob)
+          # tf.summary.histogram('logprob', logprob)
       ]), str)
       # Remember current policy to append to memory in the experience callback.
       if self._last_state is None:
@@ -222,12 +227,12 @@ class PPOAlgorithm(object):
       # pylint: disable=g-long-lambda
       summary = tf.cond(self._should_log, lambda: tf.summary.merge([
           update_filters,
+          # self._observ_filter.summary(),
           self._reward_filter.summary(),
           tf.summary.scalar('memory_size', self._memory_index),
           tf.summary.histogram('normalized_observ', norm_observ),
           tf.summary.histogram('action', self._last_action),
-          tf.summary.scalar('normalized_reward', norm_reward)]
-          + ([self._observ_filter.summary()] if self._config.normalize_observations else [])), str)
+          tf.summary.scalar('normalized_reward', norm_reward)]), str)
       return summary
 
   def end_episode(self, agent_indices):
@@ -284,6 +289,8 @@ class PPOAlgorithm(object):
           (observ, action, old_distribution_params, reward), length = data
         with tf.control_dependencies([tf.assert_greater(length, 0)]):
           length = tf.identity(length)
+          length = tf.Print(length, [length], "length=", summarize=30)
+
         if self._config.normalize_observations:
           observ = self._observ_filter.transform(observ)
         reward = self._reward_filter.transform(reward)
@@ -311,7 +318,8 @@ class PPOAlgorithm(object):
     Args:
       observ: Sequences of observations.
       action: Sequences of actions.
-      old_distribution_params: Sequences of distribution parameters of the behavioral policy.
+      old_mean: Sequences of action means of the behavioral policy.
+      old_logstd: Sequences of action log stddevs of the behavioral policy.
       reward: Sequences of rewards.
       length: Batch of sequence lengths.
 
@@ -330,6 +338,10 @@ class PPOAlgorithm(object):
       advantage = return_ - value
     mean, variance = tf.nn.moments(advantage, axes=[0, 1], keep_dims=True)
     advantage = (advantage - mean) / (tf.sqrt(variance) + 1e-8)
+
+
+    advantage = tf.Print(advantage, [mean, variance], 'mean and variance: ')
+
     advantage = tf.Print(
         advantage, [tf.reduce_mean(return_), tf.reduce_mean(value)],
         'return and value: ')
@@ -354,7 +366,8 @@ class PPOAlgorithm(object):
     Args:
       observ: Sequences of observations.
       action: Sequences of actions.
-      old_distribution_params: Sequences of distribution parameters of the behavioral policy.
+      old_mean: Sequences of action means of the behavioral policy.
+      old_logstd: Sequences of action log stddevs of the behavioral policy.
       reward: Sequences of reward.
       advantage: Sequences of advantages.
       length: Batch of sequence lengths.
@@ -406,7 +419,7 @@ class PPOAlgorithm(object):
       return_ = utility.discounted_return(
           reward, length, self._config.discount)
       advantage = return_ - value
-      value_loss = 0.5 * self._mask(advantage ** 2, length)
+      value_loss = self._config.value_loss_coeff*0.5 * self._mask(advantage ** 2, length)
       summary = tf.summary.merge([
           tf.summary.histogram('value_loss', value_loss),
           tf.summary.scalar('avg_value_loss', tf.reduce_mean(value_loss))])
@@ -426,8 +439,10 @@ class PPOAlgorithm(object):
        amount, we activate a strong penalty discouraging further divergence.
 
     Args:
-      distribution_params: Sequences of distribution parameters of the current policy.
-      old_distribution_params: Sequences of distribution parameters of the behavioral policy.
+      mean: Sequences of action means of the current policy.
+      logstd: Sequences of action log stddevs of the current policy.
+      old_mean: Sequences of action means of the behavioral policy.
+      old_logstd: Sequences of action log stddevs of the behavioral policy.
       action: Sequences of actions.
       advantage: Sequences of advantages.
       length: Batch of sequence lengths.
@@ -440,24 +455,46 @@ class PPOAlgorithm(object):
       old_distribution = self._config.distribution_class()(old_distribution_params)
 
       entropy = new_distribution.entropy()
-      kl = tf.reduce_mean(self._mask(old_distribution.kl(new_distribution), length), 1)
 
-      policy_gradient = tf.exp(new_distribution.logpdf(action) - old_distribution.logpdf(action))
 
-      surrogate_loss = -tf.reduce_mean(self._mask(
-          policy_gradient * tf.stop_gradient(advantage), length), 1)
-      kl_penalty = self._penalty * kl
-      cutoff_threshold = self._config.kl_target * self._config.kl_cutoff_factor
-      cutoff_count = tf.reduce_sum(
-          tf.cast(kl > cutoff_threshold, tf.int32))
-      with tf.control_dependencies([tf.cond(
-          cutoff_count > 0,
-          lambda: tf.Print(0, [cutoff_count], 'kl cutoff! '), int)]):
-        kl_cutoff = (
-            self._config.kl_cutoff_coef *
-            tf.cast(kl > cutoff_threshold, tf.float32) *
-            (kl - cutoff_threshold) ** 2)
-      policy_loss = surrogate_loss + kl_penalty + kl_cutoff
+
+      policy_gradient = tf.exp(new_distribution.logpdf(action) - old_distribution.logpdf(action)) #PM: This should not be called like that. Am I right?
+
+      advantage_s = tf.stop_gradient(advantage)
+
+      if self._config.clipping_coef:
+        policy_gradient_clipped = tf.clip_by_value(policy_gradient, 1 - self._config.clipping_coef,
+                                                                    1 + self._config.clipping_coef)
+        surrogate_objective = tf.minimum(policy_gradient_clipped * advantage_s, policy_gradient * advantage_s)
+        surrogate_loss = -tf.reduce_mean(self._mask(surrogate_objective, length), 1)
+      else:
+        surrogate_loss = -tf.reduce_mean(self._mask(policy_gradient * advantage_s, length), 1)
+
+      if self._config.entropy_reward:
+        entropy = tf.reshape(entropy, tf.shape(policy_gradient)) #hack to make the shape of entropy explict
+        entropy_loss = -self._config.entropy_reward*tf.reduce_mean(self._mask(entropy, length), 1)
+      else:
+        entropy_loss = 0
+
+      if self._config.kl_init_penalty==0:
+        kl = 0
+        kl_penalty = 0
+        kl_cutoff = 0
+      else:
+        cutoff_threshold = self._config.kl_target * self._config.kl_cutoff_factor
+        kl = tf.reduce_mean(self._mask(old_distribution.kl(distribution_params), length), 1)
+        kl_penalty = self._penalty * kl
+        cutoff_count = tf.reduce_sum(
+            tf.cast(kl > cutoff_threshold, tf.int32))
+        with tf.control_dependencies([tf.cond(
+            cutoff_count > 0,
+            lambda: tf.Print(0, [cutoff_count], 'kl cutoff! '), int)]):
+          kl_cutoff = (
+              self._config.kl_cutoff_coef *
+              tf.cast(kl > cutoff_threshold, tf.float32) *
+              (kl - cutoff_threshold) ** 2)
+      policy_loss = surrogate_loss + kl_penalty + kl_cutoff + entropy_loss
+      policy_loss = self._config.policy_loss_coeff*policy_loss
       summary = tf.summary.merge([
           tf.summary.histogram('entropy', entropy),
           tf.summary.histogram('kl', kl),
@@ -467,6 +504,7 @@ class PPOAlgorithm(object):
           tf.summary.histogram('kl_penalty_combined', kl_penalty + kl_cutoff),
           tf.summary.histogram('policy_loss', policy_loss),
           tf.summary.scalar('avg_surr_loss', tf.reduce_mean(surrogate_loss)),
+          tf.summary.scalar('avg_entropy', tf.reduce_mean(entropy)),
           tf.summary.scalar('avg_kl_penalty', tf.reduce_mean(kl_penalty)),
           tf.summary.scalar('avg_policy_loss', tf.reduce_mean(policy_loss))])
       policy_loss = tf.reduce_mean(policy_loss, 0)
@@ -481,38 +519,47 @@ class PPOAlgorithm(object):
 
     Args:
       observ: Sequences of observations.
-      old_distribution_params: Sequences of distribution parameters of the behavioral policy.
+      old_mean: Sequences of action means of the behavioral policy.
+      old_logstd: Sequences of action log stddevs of the behavioral policy.
       length: Batch of sequence lengths.
 
     Returns:
       Summary tensor.
     """
-    with tf.name_scope('adjust_penalty'):
-      network = self._network(observ, length)
-      assert_change = tf.assert_equal(
-          tf.reduce_all(tf.equal(network.distribution_params, old_distribution_params)), False,
-          message='policy should change')
-      print_penalty = tf.Print(0, [self._penalty], 'current penalty: ')
-      with tf.control_dependencies([assert_change, print_penalty]):
-        old_distribution = self._config.distribution_class()(old_distribution_params)
-        kl_change = tf.reduce_mean(self._mask(old_distribution.kl(network.policy), length))
-        kl_change = tf.Print(kl_change, [kl_change], 'kl change: ')
-        maybe_increase = tf.cond(
-            kl_change > 1.3 * self._config.kl_target,
-            # pylint: disable=g-long-lambda
-            lambda: tf.Print(self._penalty.assign(
-                self._penalty * 1.5), [0], 'increase penalty '),
-            float)
-        maybe_decrease = tf.cond(
-            kl_change < 0.7 * self._config.kl_target,
-            # pylint: disable=g-long-lambda
-            lambda: tf.Print(self._penalty.assign(
-                self._penalty / 1.5), [0], 'decrease penalty '),
-            float)
-      with tf.control_dependencies([maybe_increase, maybe_decrease]):
+    if self._config.kl_init_penalty==0: #We do not penalize for KL
+      with tf.name_scope('adjust_penalty'):
         return tf.summary.merge([
-            tf.summary.scalar('kl_change', kl_change),
-            tf.summary.scalar('penalty', self._penalty)])
+          tf.summary.scalar('kl_change', 0),
+          tf.summary.scalar('penalty', 0)])
+    else:
+      with tf.name_scope('adjust_penalty'):
+        network = self._network(observ, length)
+        assert_change = tf.assert_equal(
+            tf.reduce_all(tf.equal(network.distribution_params, old_distribution_params)), False,
+            message='policy should change')
+        print_penalty = tf.Print(0, [self._penalty], 'current penalty: ')
+        with tf.control_dependencies([assert_change, print_penalty]):
+          old_distribution = self._config.distribution_class()(old_distribution_params)
+          kl_change = tf.reduce_mean(self._mask(old_distribution.kl(network.distribution_params), length))
+          # kl_change = tf.reduce_mean(self._mask(utility.diag_normal_kl(
+          #     old_mean, old_logstd, network.mean, network.logstd), length))
+          kl_change = tf.Print(kl_change, [kl_change], 'kl change: ')
+          maybe_increase = tf.cond(
+              kl_change > 1.3 * self._config.kl_target,
+              # pylint: disable=g-long-lambda
+              lambda: tf.Print(self._penalty.assign(
+                  self._penalty * 1.5), [0], 'increase penalty '),
+              float)
+          maybe_decrease = tf.cond(
+              kl_change < 0.7 * self._config.kl_target,
+              # pylint: disable=g-long-lambda
+              lambda: tf.Print(self._penalty.assign(
+                  self._penalty / 1.5), [0], 'decrease penalty '),
+              float)
+        with tf.control_dependencies([maybe_increase, maybe_decrease]):
+          return tf.summary.merge([
+              tf.summary.scalar('kl_change', kl_change),
+              tf.summary.scalar('penalty', self._penalty)])
 
   def _mask(self, tensor, length):
     """Set padding elements of a batch of sequences to zero.
