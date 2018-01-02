@@ -24,6 +24,7 @@ import tensorflow as tf
 
 from agents import ppo, tools
 from agents.scripts import networks
+from agents.tools.pong_debug_env import DebugPong, ObservationType
 
 
 def default():
@@ -55,6 +56,242 @@ def default():
   kl_cutoff_factor = 2
   kl_cutoff_coef = 1000
   kl_init_penalty = 1
+  value_loss_coeff = 1
+  policy_loss_coeff = 1
+  return locals()
+
+
+def simple_pong():
+  algorithm = ppo.PPOAlgorithm
+  num_agents = 30
+  eval_episodes = 30
+
+  use_gpu = True
+  # Network
+  # network = networks.feed_forward_gaussian
+  network = networks.feed_forward_categorical
+  # distribution_class = networks.getMultivariateNormalDiagClass
+  distribution_class = networks.getCategoricalClass
+  weight_summaries = dict(
+      all=r'.*', policy=r'.*/policy/.*', value=r'.*/value/.*')
+  policy_layers = 200, 100
+  value_layers = 200, 100
+  init_mean_factor = 0.1
+  continuous_preprocessing = False
+  normalize_observations = False
+  init_logstd = -1
+  # Optimization
+  update_every = 60
+  update_epochs = 25
+  optimizer = tf.train.AdamOptimizer
+  learning_rate = 1e-4
+  # Losses
+  discount = 0.985
+  kl_target = 1e-2
+  kl_cutoff_factor = 2
+  kl_cutoff_coef = 1000
+  kl_init_penalty = 1
+  value_loss_coeff = 1
+  policy_loss_coeff = 1
+  env = lambda: DebugPong(gym.make("Pong-v0"))
+  max_length = 1000
+  steps = 20e6  # 20M
+
+  return locals()
+
+def simple_cnn_pong():
+  algorithm = ppo.PPOAlgorithm
+  num_agents = 30
+  eval_episodes = 30
+
+  use_gpu = True
+  # Network
+  # network = networks.feed_forward_gaussian
+  network = networks.feed_forward_cnn_small_categorical
+  # distribution_class = networks.getMultivariateNormalDiagClass
+  distribution_class = networks.getCategoricalClass
+  weight_summaries = dict(
+      all=r'.*', policy=r'.*/policy/.*', value=r'.*/value/.*')
+  # policy_layers = 200, 100
+  # value_layers = 200, 100
+  init_mean_factor = 0.1
+  continuous_preprocessing = False
+  normalize_observations = False
+  init_logstd = -1
+  # Optimization
+  update_every = 30
+  update_epochs = 25
+  optimizer = tf.train.AdamOptimizer
+  learning_rate = 1e-4
+  # Losses
+  discount = 0.985
+  kl_target = 1e-2
+  kl_cutoff_factor = 2
+  kl_cutoff_coef = 1000
+  kl_init_penalty = 1
+  value_loss_coeff = 1
+  policy_loss_coeff = 1
+  env = lambda: DebugPong(gym.make("Pong-v0"), observation_type=ObservationType.GRAY_FRAMES_DIFF, scale=2)
+  max_length = 200
+  steps = 20e6  # 20M
+
+  return locals()
+
+def simple_cnn_pong_clipping():
+  algorithm = ppo.PPOAlgorithm
+  num_agents = 30
+  eval_episodes = 30
+
+  use_gpu = True
+  # Network
+  # network = networks.feed_forward_gaussian
+  network = networks.feed_forward_cnn_small_categorical
+  # distribution_class = networks.getMultivariateNormalDiagClass
+  distribution_class = networks.getCategoricalClass
+  weight_summaries = dict(
+      all=r'.*', policy=r'.*/policy/.*', value=r'.*/value/.*')
+  # policy_layers = 200, 100
+  # value_layers = 200, 100
+  init_mean_factor = 0.1
+  continuous_preprocessing = False
+  normalize_observations = False
+  init_logstd = -1
+  # Optimization
+  update_every = 30
+  update_epochs = 25
+  optimizer = tf.train.AdamOptimizer
+  learning_rate = 1e-4
+  # Losses
+  discount = 0.985
+  clipping_coef = 0.2
+  kl_init_penalty = 0
+
+  kl_target = 1e-2
+  kl_cutoff_factor = 2
+  kl_cutoff_coef = 1000
+  value_loss_coeff = 1
+  policy_loss_coeff = 1
+  env = lambda: DebugPong(gym.make("Pong-v0"), observation_type=ObservationType.GRAY_FRAMES_DIFF, scale=2)
+  max_length = 200
+  steps = 20e6  # 20M
+
+  return locals()
+
+def simple_cnn_pong_two_frames():
+  algorithm = ppo.PPOAlgorithm
+  num_agents = 30
+  eval_episodes = 30
+
+  use_gpu = True
+  # Network
+  # network = networks.feed_forward_gaussian
+  network = networks.feed_forward_cnn_small_categorical
+  # distribution_class = networks.getMultivariateNormalDiagClass
+  distribution_class = networks.getCategoricalClass
+  weight_summaries = dict(
+      all=r'.*', policy=r'.*/policy/.*', value=r'.*/value/.*')
+  # policy_layers = 200, 100
+  # value_layers = 200, 100
+  init_mean_factor = 0.1
+  continuous_preprocessing = False
+  normalize_observations = False
+  init_logstd = -1
+  # Optimization
+  update_every = 30
+  update_epochs = 25
+  optimizer = tf.train.AdamOptimizer
+  learning_rate = 1e-4
+  # Losses
+  discount = 0.985
+  kl_target = 1e-2
+  kl_cutoff_factor = 2
+  kl_cutoff_coef = 1000
+  kl_init_penalty = 1
+  value_loss_coeff = 1
+  policy_loss_coeff = 1
+  env = lambda: DebugPong(gym.make("Pong-v0"), observation_type=ObservationType.GRAY_FRAMES, scale=2)
+  max_length = 200
+  steps = 20e6  # 20M
+
+  return locals()
+
+def simple_cnn_pong_three_frames():
+  algorithm = ppo.PPOAlgorithm
+  num_agents = 30
+  eval_episodes = 30
+
+  use_gpu = True
+  # Network
+  # network = networks.feed_forward_gaussian
+  network = networks.feed_forward_cnn_small_categorical
+  # distribution_class = networks.getMultivariateNormalDiagClass
+  distribution_class = networks.getCategoricalClass
+  weight_summaries = dict(
+      all=r'.*', policy=r'.*/policy/.*', value=r'.*/value/.*')
+  # policy_layers = 200, 100
+  # value_layers = 200, 100
+  init_mean_factor = 0.1
+  continuous_preprocessing = False
+  normalize_observations = False
+  init_logstd = -1
+  # Optimization
+  update_every = 30
+  update_epochs = 25
+  optimizer = tf.train.AdamOptimizer
+  learning_rate = 2e-5
+  # Losses
+  discount = 0.985
+  kl_target = 1e-2
+  kl_cutoff_factor = 2
+  kl_cutoff_coef = 1000
+  kl_init_penalty = 1
+  value_loss_coeff = 1
+  policy_loss_coeff = 1
+  env = lambda: DebugPong(gym.make("Pong-v0"), observation_type=ObservationType.GRAY_FRAMES_BOTH, scale=2)
+  max_length = 200
+  steps = 20e6  # 20M
+
+  return locals()
+
+
+def simple_cnn_pong_three_frames_small_rl_cliping():
+  algorithm = ppo.PPOAlgorithm
+  num_agents = 30
+  eval_episodes = 30
+
+  use_gpu = True
+  # Network
+  # network = networks.feed_forward_gaussian
+  network = networks.feed_forward_cnn_small_categorical
+  # distribution_class = networks.getMultivariateNormalDiagClass
+  distribution_class = networks.getCategoricalClass
+  weight_summaries = dict(
+      all=r'.*', policy=r'.*/policy/.*', value=r'.*/value/.*')
+  # policy_layers = 200, 100
+  # value_layers = 200, 100
+  init_mean_factor = 0.1
+  continuous_preprocessing = False
+  normalize_observations = False
+  init_logstd = -1
+  # Optimization
+  update_every = 30
+  update_epochs = 25
+  optimizer = tf.train.AdamOptimizer
+  learning_rate = 4e-5
+  # Losses
+  discount = 0.985
+  kl_target = 1e-2
+  kl_cutoff_factor = 2
+  kl_cutoff_coef = 1000
+  entropy_reward = 0.02
+  clipping_coef = 0.2
+  kl_init_penalty = 0
+  value_loss_coeff = 1
+  policy_loss_coeff = 1
+  env = lambda: DebugPong(gym.make("Pong-v0"), observation_type=ObservationType.GRAY_FRAMES_BOTH, scale=2)
+  max_length = 200
+  steps = 20e6  # 20M
+
   return locals()
 
 def default_atari():
@@ -67,7 +304,7 @@ def default_atari():
   eval_episodes = 30
   use_gpu = False
   # Network
-  network = networks.feed_forward_categorical
+  network = networks.feed_forward_cnn_categorical
   distribution_class = networks.getCategoricalClass
   weight_summaries = dict(
       all=r'.*', policy=r'.*/policy/.*', value=r'.*/value/.*')
@@ -84,19 +321,49 @@ def default_atari():
   kl_init_penalty = 1
   return locals()
 
+
+
 def pong():
-  """Configuration for the pendulum classic control task."""
   locals().update(default_atari())
+  use_gpu = False
   num_agents = 5
   update_every = 10
   update_epochs = 4
-  learning_rate = 1e-2
+  learning_rate = 1e-3
+  value_loss_coeff = 1
+  policy_loss_coeff = 1
+  gae_lambda = True
+  gae_lambda = 0.95
   # Environment
   env = lambda: tools.wrappers.FrameHistory(tools.wrappers.Shrink(gym.make("Pong-v0")), past_indices=range(0, 2), flatten=True)
   max_length = 300
   steps = 2e6  # 2M
   return locals()
 
+def pong_16():
+  """Configuration for the pendulum classic control task."""
+  locals().update(pong())
+  policy_loss_coeff = 16
+  return locals()
+
+def pong_32():
+  """Configuration for the pendulum classic control task."""
+  locals().update(pong())
+  policy_loss_coeff = 32
+  return locals()
+
+def pong_64():
+  """Configuration for the pendulum classic control task."""
+  locals().update(pong())
+  policy_loss_coeff = 64
+  return locals()
+
+
+def pong_128():
+  """Configuration for the pendulum classic control task."""
+  locals().update(pong())
+  policy_loss_coeff = 128
+  return locals()
 
 
 def pendulum():
@@ -106,6 +373,18 @@ def pendulum():
   env = 'Pendulum-v0'
   max_length = 200
   steps = 2e6  # 2M
+  return locals()
+
+def pong_continuous():
+  """Configuration for MuJoCo's reacher task."""
+  locals().update(default())
+  # Environment
+  env = lambda: DebugPong(gym.make("Pong-v0"), discrete_control=False)
+  max_length = 1000
+  use_gpu = False
+  steps = 5e6  # 5M
+  discount = 0.985
+  update_every = 60
   return locals()
 
 
