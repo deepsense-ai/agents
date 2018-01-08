@@ -149,8 +149,8 @@ def save_config(config, logdir=None):
     tf.logging.info(message.format(config.logdir))
     tf.gfile.MakeDirs(config.logdir)
     config_path = os.path.join(config.logdir, 'config.yaml')
-    # with tf.gfile.FastGFile(config_path, 'w') as file_:
-    #   yaml.dump(config, file_, default_flow_style=False)
+    with tf.gfile.FastGFile(config_path, 'w') as file_:
+       yaml.dump(config, file_, default_flow_style=False)
   else:
     message = (
         'Start a new run without storing summaries and checkpoints since no '

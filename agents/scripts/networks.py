@@ -220,13 +220,17 @@ def feed_forward_cnn_small_categorical(
   # observations = tf.Print(observations, [test], "Sanity test=")
 
   # observations = observations[..., None]
+
+  # Hack follows, removes the 3rd frame 
   observations = observations[...,:2]
   obs_shape = observations.shape.as_list()
   x = tf.reshape(observations, [-1]+ obs_shape[2:])
+  print(x.shape)
 
   with tf.variable_scope('policy'):
     x = tf.to_float(x)/255.0
     x = tf.contrib.layers.conv2d(x, 32, [5, 5], [2, 2], activation_fn= tf.nn.relu, padding="SAME")
+    print(x.shape)
     x = tf.contrib.layers.conv2d(x, 32, [5, 5], [2, 2], activation_fn=tf.nn.relu, padding="SAME")
 
     flat_x = tf.reshape(x, [
@@ -248,7 +252,13 @@ def feed_forward_cnn_small_categorical(
     # logits = tf.Print(logits, [logits_cast], "logits_1=", summarize=12)
     # logits = tf.Print(logits, [logits[1,]], "logits_2=")
 
-  policy = CategoricalDistibution(logits)
+  # logits should allow for every action with >> 0 probability
+  # a sanity check: enforce 
+  #   logits = 0.00001 * logits 
+  # and check how it behaves
+  # PM: it mat be worthwhile to scale logits by something 
+  #     different that 1. not only as a sanity check
+  policy = CategoricalDistibution(1.*logits)
 
   return NetworkOutput(value, state, policy, logits)
 

@@ -44,20 +44,27 @@ def _create_environment(config, outdir):
     Wrapped OpenAI Gym environment.
   """
   if isinstance(config.env, str):
+    print("Config defines env as string {}".format(str))
     env = gym.make(config.env)
   else:
-    env = config.env()
+    print("Config defines env as lambda {}".format(config.env()['env']()))
+    env = config.env()['env']() # config.env()
+  print(env)
   # Ensure that the environment has the specification attribute set as expected
   # by the monitor wrapper.
-  if not hasattr(env, 'spec'):
-    setattr(env, 'spec', getattr(env, 'spec', None))
-  if config.max_length:
-    env = tools.wrappers.LimitDuration(env, config.max_length)
+  # if not hasattr(env, 'spec'):
+  #  setattr(env, 'spec', getattr(env, 'spec', None))
+  # if config.max_length_eval:
+  #  env = tools.wrappers.LimitDuration(env, config.max_length_eval)
+  # env = gym.wrappers.Monitor(
+  #    env, outdir, lambda unused_episode_number: True, force=True)
   env = gym.wrappers.Monitor(
-      env, outdir, lambda unused_episode_number: True)
-  env = tools.wrappers.RangeNormalize(env)
-  env = tools.wrappers.ClipAction(env)
-  env = tools.wrappers.ConvertTo32Bit(env)
+      env, directory=outdir, force=True)
+
+  if config.continuous_preprocessing:
+    env = tools.wrappers.RangeNormalize(env)
+    env = tools.wrappers.ClipAction(env)
+    env = tools.wrappers.ConvertTo32Bit(env)
   return env
 
 
@@ -102,7 +109,7 @@ def visualize(
         num_agents, env_processes)
     graph = utility.define_simulation_graph(
         batch_env, config.algorithm, config)
-    total_steps = num_episodes * config.max_length
+    total_steps = num_episodes * config.max_length_eval
     loop = _define_loop(graph, total_steps)
   saver = utility.define_saver(
       exclude=(r'.*_temporary/.*', r'global_step'))
@@ -140,7 +147,7 @@ if __name__ == '__main__':
       'checkpoint', None,
       'Checkpoint name to load; defaults to most recent.')
   tf.app.flags.DEFINE_integer(
-      'num_agents', 1,
+      'num_agents', 30,
       'How many environments to step in parallel.')
   tf.app.flags.DEFINE_integer(
       'num_episodes', 5,

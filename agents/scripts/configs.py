@@ -25,13 +25,16 @@ import tensorflow as tf
 from agents import ppo, tools
 from agents.scripts import networks
 from agents.tools.pong_debug_env import DebugPong, ObservationType
+# from agents.tools.pong_debug_env import DebugPong as DebugBreakout
+from agents.tools.pong_debug_env import DebugBreakout
+# from agents.tools.breakout_debug_env import DebugBreakout
 
 
 def default():
   """Default configuration for PPO."""
   # General
   algorithm = ppo.PPOAlgorithm
-  num_agents = 30
+  num_agents = 10
   eval_episodes = 30
   use_gpu = True
   # Network
@@ -294,6 +297,171 @@ def simple_cnn_pong_three_frames_small_rl_cliping():
 
   return locals()
 
+def simple_cnn_pong_v2_three_frames_small_rl_cliping():
+  algorithm = ppo.PPOAlgorithm
+  num_agents = 30
+  eval_episodes = 30
+
+  use_gpu = True
+  # Network
+  # network = networks.feed_forward_gaussian
+  network = networks.feed_forward_cnn_small_categorical
+  # distribution_class = networks.getMultivariateNormalDiagClass
+  distribution_class = networks.getCategoricalClass
+  weight_summaries = dict(
+      all=r'.*', policy=r'.*/policy/.*', value=r'.*/value/.*')
+  # policy_layers = 200, 100
+  # value_layers = 200, 100
+  init_mean_factor = 0.1
+  continuous_preprocessing = False
+  normalize_observations = False
+  init_logstd = -1
+
+  # Optimization
+  #   update_every * max_length
+  # this supposedly is the batch size
+  # for the observations 
+  update_every = 30  # 30 - standard, 5 - nans, 10 - nans
+  max_length = 300 # 200 - standard, 1200 - nans, 600 - nans
+
+  # currently unused - it would be nice to have
+  # different train and eval lengths
+  max_length_eval = 10000
+
+  # internal computations of PPO
+  # related to the surrogate loss
+  # remarks (PM): 
+  #   - with KL surrogate loss and large lr seems to be 
+  #     not learning (problems with the value network)
+  #   - check it with the clipped surrogate loss and
+  #     larger lr
+  # PM conjecture: update_epochs = 1 
+  #                kl_init_penalty = 0
+  #                clipping_coef = 0
+  #   boils down to A3C?
+  update_epochs = 25
+  optimizer = tf.train.AdamOptimizer
+  learning_rate = 4e-4 # 4e-5
+
+  # Losses
+  discount = 0.985
+
+  # Related to KL surrogate loss 
+  # Important (hack follows)
+  #   kl_init_penalty = 0 means that
+  #      we do not use the KL surrogate loss
+  kl_target = 1e-2
+  kl_cutoff_factor = 2
+  kl_cutoff_coef = 1000
+  kl_init_penalty = 0 
+
+  # Additional reward, worth testing
+  entropy_reward = 0.02 # also tested 0.2 
+
+  # Related to clipped surrogate loss 
+  # Important (hack follows)
+  #   clipping_coef = 0 means that
+  #      we do not use the clipped surrogate loss
+  clipping_coef = 0.2
+
+  # An attempt to weight value and policy losses 
+  # value loss >> policy loss
+  # hence there is a temptation to 
+  # increase policy loss
+  # PM: - if networks for value and policy functions are 
+  #   independent, then this maybe of minor importance
+  #   - is an artifcat of a large batch?
+  value_loss_coeff = 1
+  policy_loss_coeff = 128 # also tested 16, 1
+
+  env = lambda: DebugBreakout(gym.make("Pong-v0"), observation_type=ObservationType.GRAY_FRAMES_BOTH)
+  steps = 20e6  # 20M
+
+  return locals()
+
+def simple_cnn_breakout_three_frames_small_rl_cliping():
+  algorithm = ppo.PPOAlgorithm
+  num_agents = 30
+  eval_episodes = 30
+
+  use_gpu = True
+  # Network
+  # network = networks.feed_forward_gaussian
+  network = networks.feed_forward_cnn_small_categorical
+  # distribution_class = networks.getMultivariateNormalDiagClass
+  distribution_class = networks.getCategoricalClass
+  weight_summaries = dict(
+      all=r'.*', policy=r'.*/policy/.*', value=r'.*/value/.*')
+  # policy_layers = 200, 100
+  # value_layers = 200, 100
+  init_mean_factor = 0.1
+  continuous_preprocessing = False
+  normalize_observations = False
+  init_logstd = -1
+
+  # Optimization
+  #   update_every * max_length
+  # this supposedly is the batch size
+  # for the observations 
+  update_every = 30  # 30 - standard, 5 - nans, 10 - nans
+  max_length = 300 # 200 - standard, 1200 - nans, 600 - nans
+
+  # currently unused - it would be nice to have
+  # different train and eval lengths
+  max_length_eval = 10000
+
+  # internal computations of PPO
+  # related to the surrogate loss
+  # remarks (PM): 
+  #   - with KL surrogate loss and large lr seems to be 
+  #     not learning (problems with the value network)
+  #   - check it with the clipped surrogate loss and
+  #     larger lr
+  # PM conjecture: update_epochs = 1 
+  #                kl_init_penalty = 0
+  #                clipping_coef = 0
+  #   boils down to A3C?
+  update_epochs = 25
+  optimizer = tf.train.AdamOptimizer
+  learning_rate = 4e-4 # 4e-5
+
+  # Losses
+  discount = 0.985
+
+  # Related to KL surrogate loss 
+  # Important (hack follows)
+  #   kl_init_penalty = 0 means that
+  #      we do not use the KL surrogate loss
+  kl_target = 1e-2
+  kl_cutoff_factor = 2
+  kl_cutoff_coef = 1000
+  kl_init_penalty = 0 
+
+  # Additional reward, worth testing
+  entropy_reward = 0.2 # 0.02 
+
+  # Related to clipped surrogate loss 
+  # Important (hack follows)
+  #   clipping_coef = 0 means that
+  #      we do not use the clipped surrogate loss
+  clipping_coef = 0.2
+
+  # An attempt to weight value and policy losses 
+  # value loss >> policy loss
+  # hence there is a temptation to 
+  # increase policy loss
+  # PM: - if networks for value and policy functions are 
+  #   independent, then this maybe of minor importance
+  #   - is an artifcat of a large batch?
+  value_loss_coeff = 1
+  policy_loss_coeff = 16
+
+  env = lambda: DebugBreakout(gym.make("Breakout-v0"), observation_type=ObservationType.GRAY_FRAMES_BOTH)
+  steps = 20e6  # 20M
+
+  return locals()
+
+# TODO: check why it is not working
 def default_atari():
   """Default configuration for PPO."""
   # General
@@ -321,11 +489,10 @@ def default_atari():
   kl_init_penalty = 1
   return locals()
 
-
-
+# TODO: check why it is not working
 def pong():
   locals().update(default_atari())
-  use_gpu = False
+  use_gpu = True
   num_agents = 5
   update_every = 10
   update_epochs = 4
@@ -339,32 +506,6 @@ def pong():
   max_length = 300
   steps = 2e6  # 2M
   return locals()
-
-def pong_16():
-  """Configuration for the pendulum classic control task."""
-  locals().update(pong())
-  policy_loss_coeff = 16
-  return locals()
-
-def pong_32():
-  """Configuration for the pendulum classic control task."""
-  locals().update(pong())
-  policy_loss_coeff = 32
-  return locals()
-
-def pong_64():
-  """Configuration for the pendulum classic control task."""
-  locals().update(pong())
-  policy_loss_coeff = 64
-  return locals()
-
-
-def pong_128():
-  """Configuration for the pendulum classic control task."""
-  locals().update(pong())
-  policy_loss_coeff = 128
-  return locals()
-
 
 def pendulum():
   """Configuration for the pendulum classic control task."""
