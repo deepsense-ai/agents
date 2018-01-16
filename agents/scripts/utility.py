@@ -46,7 +46,7 @@ def define_simulation_graph(batch_env, algo_cls, config):
   do_report = tf.placeholder(tf.bool, name='do_report')
   force_reset = tf.placeholder(tf.bool, name='force_reset')
   algo = algo_cls(batch_env, step, is_training, should_log, config)
-  done, score, summary = tools.simulate(
+  done, score, summary, training = tools.simulate(
       batch_env, algo, should_log, force_reset)
   message = 'Graph contains {} trainable variables.'
   tf.logging.info(message.format(tools.count_weights()))

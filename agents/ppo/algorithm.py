@@ -250,6 +250,8 @@ class PPOAlgorithm(object):
        Summary tensor.
     """
     with tf.name_scope('end_episode/'):
+      self._is_training = tf.Print(self._is_training, [self._is_training], "self._is_training shape=")
+
       return tf.cond(
           self._is_training,
           lambda: self._define_end_episode(agent_indices), str)
@@ -258,6 +260,8 @@ class PPOAlgorithm(object):
     """Implement the branch of end_episode() entered during training."""
     episodes, length = self._episodes.data(agent_indices)
     space_left = self._config.update_every - self._memory_index
+    length = tf.Print(length, [length], "length shape=")
+
     use_episodes = tf.range(tf.minimum(
         tf.shape(agent_indices)[0], space_left))
     episodes = [tf.gather(elem, use_episodes) for elem in episodes]
@@ -266,9 +270,13 @@ class PPOAlgorithm(object):
         use_episodes + self._memory_index)
     with tf.control_dependencies([append]):
       inc_index = self._memory_index.assign_add(tf.shape(use_episodes)[0])
+      inc_index = tf.Print(inc_index, [inc_index], "inc_index shape=")
+
     with tf.control_dependencies([inc_index]):
       memory_full = self._memory_index >= self._config.update_every
-      return tf.cond(memory_full, self._training, str)
+      summary = tf.summary.tensor_summary("memory_full_fake_summary", memory_full)
+      return summary
+      # return tf.cond(memory_full, self._training, str)
 
   def _training(self):
     """Perform multiple training iterations of both policy and value baseline.

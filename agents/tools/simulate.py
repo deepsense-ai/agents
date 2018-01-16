@@ -40,6 +40,11 @@ def simulate(batch_env, algo, log=True, reset=False):
     intermediate scores for the episodes, and a summary tensor.
   """
 
+  def _define_training():
+    train_op = algo._training()
+    with tf.control_dependencies([train_op]):
+      return tf.constant(True)
+
   def _define_begin_episode(agent_indices):
     """Reset environments, intermediate scores and durations for new episodes.
 
@@ -96,8 +101,8 @@ def simulate(batch_env, algo, log=True, reset=False):
     """
     assert agent_indices.shape.ndims == 1
     submit_score = mean_score.submit(tf.gather(score, agent_indices))
-    submit_length = mean_length.submit(
-        tf.cast(tf.gather(length, agent_indices), tf.float32))
+    submit_length = mean_length.submit(tf.cast(tf.gather(length, agent_indices), tf.float32))
+
     with tf.control_dependencies([submit_score, submit_length]):
       return algo.end_episode(agent_indices)
 
@@ -136,6 +141,9 @@ def simulate(batch_env, algo, log=True, reset=False):
       step = _define_step()
     with tf.control_dependencies([step]):
       agent_indices = tf.cast(tf.where(batch_env.done)[:, 0], tf.int32)
+      agent_indices = tf.Print(agent_indices, [tf.shape(agent_indices), tf.cast(tf.shape(agent_indices)[0], tf.bool)],
+                               "agent_indices shape=")
+
       end_episode = tf.cond(
           tf.cast(tf.shape(agent_indices)[0], tf.bool),
           lambda: _define_end_episode(agent_indices), str)
@@ -144,4 +152,6 @@ def simulate(batch_env, algo, log=True, reset=False):
           _define_summaries(), begin_episode, step, end_episode])
     with tf.control_dependencies([summary]):
       done, score = tf.identity(batch_env.done), tf.identity(score)
-    return done, score, summary
+
+
+    return done, score, summary, _define_training()

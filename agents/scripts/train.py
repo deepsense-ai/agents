@@ -47,9 +47,9 @@ def _create_environment(config):
     env = gym.make(config.env)
   else:
     env = config.env()
-  if config.max_length:
-    env = tools.wrappers.LimitDuration(env, config.max_length)
   if config.continuous_preprocessing:
+    if config.max_length:
+      env = tools.wrappers.LimitDuration(env, config.max_length)
     env = tools.wrappers.RangeNormalize(env)
     env = tools.wrappers.ClipAction(env)
     env = tools.wrappers.ConvertTo32Bit(env)
@@ -77,12 +77,21 @@ def _define_loop(graph, logdir, train_steps, eval_steps):
       log_every=train_steps // 2,
       checkpoint_every=None,
       feed={graph.is_training: True})
+
   loop.add_phase(
-      'eval', graph.done, graph.score, graph.summary, eval_steps,
-      report_every=eval_steps,
-      log_every=eval_steps // 2,
-      checkpoint_every=10 * eval_steps,
-      feed={graph.is_training: False})
+      'train', graph.training, graph.score, graph.summary, 30,
+      report_every=30,
+      log_every=1,
+      checkpoint_every=None,
+      feed={graph.is_training: True})
+
+  # loop.add_phase(
+  #     'eval', graph.done, graph.score, graph.summary, eval_steps,
+  #     report_every=eval_steps,
+  #     log_every=eval_steps // 2,
+  #     checkpoint_every=10 * eval_steps,
+  #     feed={graph.is_training: False})
+  #
   return loop
 
 
@@ -117,7 +126,7 @@ def train(config, env_processes):
         (config.update_every + config.eval_episodes))
   # Exclude episode related variables since the Python state of environments is
   # not checkpointed and thus new episodes start after resuming.
-  saver = utility.define_saver(exclude=(r'.*_temporary/.*',))
+  saver = utility.define_saver()
   sess_config = tf.ConfigProto(allow_soft_placement=True)
   sess_config.gpu_options.allow_growth = True
   with tf.Session(config=sess_config) as sess:
