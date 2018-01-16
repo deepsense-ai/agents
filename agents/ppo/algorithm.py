@@ -121,8 +121,8 @@ class PPOAlgorithm(object):
       else:
         reset_state = utility.reinit_nested_vars(
             self._last_state, agent_indices)
-      reset_buffer = self._episodes.clear(agent_indices)
-      with tf.control_dependencies([reset_state, reset_buffer]):
+      # reset_buffer = self._episodes.clear(agent_indices)
+      with tf.control_dependencies([reset_state]):
         return tf.constant('')
 
   def perform(self, agent_indices, observ):
@@ -136,6 +136,8 @@ class PPOAlgorithm(object):
       Tuple of action batch tensor and summary tensor.
     """
     with tf.name_scope('perform/'):
+      # agent_indices = tf.Print(agent_indices, [agent_indices], "agent_indices=", summarize=30)
+
       if self._config.normalize_observations:
         observ = self._observ_filter.transform(observ)
       if self._last_state is None:
@@ -250,10 +252,12 @@ class PPOAlgorithm(object):
        Summary tensor.
     """
     with tf.name_scope('end_episode/'):
-      self._is_training = tf.Print(self._is_training, [self._is_training], "self._is_training shape=")
-
+      episodes, length = self._episodes.data(agent_indices)
+      self._is_training = tf.Print(self._is_training, [self._is_training, tf.reduce_max(length)], "self._is_training shape=")
       return tf.cond(
-          self._is_training,
+          # self._is_training
+          tf.logical_and(self._is_training,
+                         tf.equal(self._config.max_length, tf.reduce_max(length) + 1)),
           lambda: self._define_end_episode(agent_indices), str)
 
   def _define_end_episode(self, agent_indices):
@@ -271,8 +275,9 @@ class PPOAlgorithm(object):
     with tf.control_dependencies([append]):
       inc_index = self._memory_index.assign_add(tf.shape(use_episodes)[0])
       inc_index = tf.Print(inc_index, [inc_index], "inc_index shape=")
+      clear_episode_mem = self._episodes.clear()
 
-    with tf.control_dependencies([inc_index]):
+    with tf.control_dependencies([inc_index, clear_episode_mem]):
       memory_full = self._memory_index >= self._config.update_every
       summary = tf.summary.tensor_summary("memory_full_fake_summary", memory_full)
       return summary
@@ -346,7 +351,6 @@ class PPOAlgorithm(object):
       advantage = return_ - value
     mean, variance = tf.nn.moments(advantage, axes=[0, 1], keep_dims=True)
     advantage = (advantage - mean) / (tf.sqrt(variance) + 1e-8)
-
 
     advantage = tf.Print(advantage, [mean, variance], 'mean and variance: ')
 

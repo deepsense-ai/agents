@@ -79,7 +79,7 @@ def _define_loop(graph, logdir, train_steps, eval_steps):
       feed={graph.is_training: True})
 
   loop.add_phase(
-      'train', graph.training, graph.score, graph.summary, 30,
+      'train', graph.training, graph.score, graph.summary, 30, #TODO: this invokes one more step of the environment (due to graph.score or graph.summary usage)'train', graph.training, tf.zeros(tf.shape(graph.score)), tf.zeros(tf.shape(graph.summary)), 30, this
       report_every=30,
       log_every=1,
       checkpoint_every=None,

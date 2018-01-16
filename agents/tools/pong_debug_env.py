@@ -32,6 +32,7 @@ class DebugPong(Wrapper):
     self._buffer_states = deque([], maxlen=2)
     self._buffer_frames = deque([], maxlen=2)
     self._scale = scale
+    self._max_number_of_steps = number_of_steps
     self._number_of_steps = number_of_steps
     self._observation_type = observation_type
     if self._observation_type == ObservationType.STATE:
@@ -104,7 +105,7 @@ class DebugPong(Wrapper):
     self._update_buffers()
     obs = self._get_obs()
 
-    if self._number_of_steps is not None:
+    if self._max_number_of_steps is not None:
       self._number_of_steps -= 1
       if self._number_of_steps == 0:
         done = True
@@ -121,6 +122,8 @@ class DebugPong(Wrapper):
     self._buffer_states.append(state_obs)
 
   def _reset(self, **kwargs):
+    print("Reset in the environment")
+    self._number_of_steps = self._max_number_of_steps
     self.env.reset()
     self._update_buffers()
     self._update_buffers()

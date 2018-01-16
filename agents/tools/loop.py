@@ -132,8 +132,8 @@ class Loop(object):
         message += 'Phase {} (phase step {}, global step {}).'
         tf.logging.info(message.format(phase.name, phase_step, global_step))
       # Populate book keeping tensors.
-      phase.feed[self._reset] = steps_in % phase.steps < steps_made #(steps_in < steps_made)  #TODO: think what to do here. Possibly remove self._reset
-      print("Self reset:".format(phase.feed[self._reset]))
+      phase.feed[self._reset] = False #steps_in % phase.steps < steps_made #(steps_in < steps_made)  #TODO: think what to do here. Possibly remove self._reset
+      print("Self reset:{}".format(phase.feed[self._reset]))
       phase.feed[self._log] = (
           phase.writer and
           self._is_every_steps(phase_step, phase.batch, phase.log_every))
