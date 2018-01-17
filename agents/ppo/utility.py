@@ -77,6 +77,19 @@ def discounted_return(reward, length, discount):
       tf.zeros_like(reward[:, -1]), 1, False), [1, 0]), [1])
   return tf.check_numerics(tf.stop_gradient(return_), 'return')
 
+def discounted_return_multi_episodes(reward, value, new, discount):
+  """Discounted Monte-Carlo returns."""
+  new = tf.cast(new, tf.float32)
+  reward2 = new[:,-1]*reward[:,-1] + (1 - new[:,-1]) * value[:,-1]
+  reward = tf.concat([reward[:,:-1], reward2[..., None]], axis=1)
+  return_ = tf.reverse(tf.transpose(tf.scan(
+      lambda agg, cur: cur[0] + (1 - cur[1]) * discount * agg,  # fn
+      [tf.transpose(tf.reverse(reward, [1])),  # elem
+       tf.transpose(tf.reverse(new, [1]))],
+      tf.zeros_like(reward[:, -1]),  # initializer
+      1,
+      False)), [1])
+  return tf.check_numerics(tf.stop_gradient(return_), 'return')
 
 def fixed_step_return(reward, value, length, discount, window):
   """N-step discounted return."""

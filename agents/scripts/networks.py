@@ -168,7 +168,7 @@ def feed_forward_gaussian(
   distribution_params = tf.concat([mean, logstd], axis=2)
   policy = MultivariateNormalDiagDistribution(distribution_params)
 
-  value = tf.Print(value, [tf.shape(value)], "value shape=")
+#  value = tf.Print(value, [tf.shape(value)], "value shape=")
 
   return NetworkOutput(value, state, policy, distribution_params)
 

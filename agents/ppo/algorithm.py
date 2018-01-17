@@ -67,7 +67,8 @@ class PPOAlgorithm(object):
 
     # Memory stores tuple of observ, action, distribution_params, reward.
     template = (
-        self._batch_env.observ[0], self._batch_env.action[0], self._last_distribution_params[0], self._batch_env.reward[0]
+        self._batch_env.observ[0], self._batch_env.action[0], self._last_distribution_params[0],
+        self._batch_env.reward[0], tf.cast(self._batch_env.done[0], dtype=tf.int32)
     )
     self._memory = memory.EpisodeMemory(
         template, config.update_every, config.max_length, 'memory')
@@ -178,7 +179,7 @@ class PPOAlgorithm(object):
         return action[:, 0], tf.identity(summary)
 
   def experience(
-      self, agent_indices, observ, action, reward, unused_done, unused_nextob):
+      self, agent_indices, observ, action, reward, done, unused_nextob):
     """Process the transition tuple of the current step.
 
     When training, add the current transition tuple to the memory and update
@@ -190,7 +191,7 @@ class PPOAlgorithm(object):
       observ: Batch tensor of observations.
       action: Batch tensor of actions.
       reward: Batch tensor of rewards.
-      unused_done: Batch tensor of done flags.
+      done: Batch tensor of done flags.
       unused_nextob: Batch tensor of successor observations.
 
     Returns:
@@ -201,9 +202,9 @@ class PPOAlgorithm(object):
           self._is_training,
           # pylint: disable=g-long-lambda
           lambda: self._define_experience(
-              agent_indices, observ, action, reward), str)
+              agent_indices, observ, action, reward, done), str)
 
-  def _define_experience(self, agent_indices, observ, action, reward):
+  def _define_experience(self, agent_indices, observ, action, reward, done):
     """Implement the branch of experience() entered during training."""
     if self._config.normalize_observations:
       update_filters = tf.summary.merge([
@@ -218,7 +219,7 @@ class PPOAlgorithm(object):
         # NOTE: Doesn't seem to change much.
         action = self._last_action
 
-      batch = (observ, action, tf.gather(self._last_distribution_params, agent_indices), reward)
+      batch = (observ, action, tf.gather(self._last_distribution_params, agent_indices), reward, done)
       append = self._episodes.append(batch, agent_indices)
     with tf.control_dependencies([ append]):
       if self._config.normalize_observations:
@@ -253,7 +254,7 @@ class PPOAlgorithm(object):
     """
     with tf.name_scope('end_episode/'):
       episodes, length = self._episodes.data(agent_indices)
-      self._is_training = tf.Print(self._is_training, [self._is_training, tf.reduce_max(length)], "self._is_training shape=")
+      #self._is_training = tf.Print(self._is_training, [self._is_training, tf.reduce_max(length)], "self._is_training shape=")
       return tf.cond(
           # self._is_training
           tf.logical_and(self._is_training,
@@ -264,7 +265,7 @@ class PPOAlgorithm(object):
     """Implement the branch of end_episode() entered during training."""
     episodes, length = self._episodes.data(agent_indices)
     space_left = self._config.update_every - self._memory_index
-    length = tf.Print(length, [length], "length shape=")
+    #length = tf.Print(length, [length], "length shape=")
 
     use_episodes = tf.range(tf.minimum(
         tf.shape(agent_indices)[0], space_left))
@@ -274,13 +275,11 @@ class PPOAlgorithm(object):
         use_episodes + self._memory_index)
     with tf.control_dependencies([append]):
       inc_index = self._memory_index.assign_add(tf.shape(use_episodes)[0])
-      inc_index = tf.Print(inc_index, [inc_index], "inc_index shape=")
+      #inc_index = tf.Print(inc_index, [inc_index], "inc_index shape=")
       clear_episode_mem = self._episodes.clear()
 
     with tf.control_dependencies([inc_index, clear_episode_mem]):
-      memory_full = self._memory_index >= self._config.update_every
-      summary = tf.summary.tensor_summary("memory_full_fake_summary", memory_full)
-      return summary
+      return tf.constant('')
       # return tf.cond(memory_full, self._training, str)
 
   def _training(self):
@@ -299,15 +298,15 @@ class PPOAlgorithm(object):
             self._memory_index, self._config.update_every)
         with tf.control_dependencies([assert_full]):
           data = self._memory.data()
-          (observ, action, old_distribution_params, reward), length = data
+          (observ, action, old_distribution_params, reward, done), length = data
         with tf.control_dependencies([tf.assert_greater(length, 0)]):
           length = tf.identity(length)
-          length = tf.Print(length, [length], "length=", summarize=30)
+          #length = tf.Print(length, [length], "length=", summarize=30)
 
         if self._config.normalize_observations:
           observ = self._observ_filter.transform(observ)
         reward = self._reward_filter.transform(reward)
-        update_summary = self._perform_update_steps(observ, action, old_distribution_params, reward, length)
+        update_summary = self._perform_update_steps(observ, action, old_distribution_params, reward, length, done)
         with tf.control_dependencies([update_summary]):
           penalty_summary = self._adjust_penalty(
               observ, old_distribution_params, length)
@@ -321,7 +320,7 @@ class PPOAlgorithm(object):
               update_summary, penalty_summary, weight_summary])
 
   def _perform_update_steps(
-      self, observ, action, old_distribution_params, reward, length):
+      self, observ, action, old_distribution_params, reward, length, done):
     """Perform multiple update steps of value function and policy.
 
     The advantage is computed once at the beginning and shared across
@@ -339,9 +338,10 @@ class PPOAlgorithm(object):
     Returns:
       Summary tensor.
     """
-    return_ = utility.discounted_return(
-        reward, length, self._config.discount)
     value = self._network(observ, length).value
+    return_ = utility.discounted_return_multi_episodes(reward, value, done, self._config.discount)
+    # return_ = utility.discounted_return(
+    #     reward, length, self._config.discount)
 
     if self._config.gae_lambda:
       advantage = utility.lambda_return(
@@ -362,7 +362,7 @@ class PPOAlgorithm(object):
         'normalized advantage: ')
     # pylint: disable=g-long-lambda
     value_loss, policy_loss, summary = tf.scan(
-        lambda _1, _2: self._update_step(observ, action, old_distribution_params, reward, advantage, length),
+        lambda _1, _2: self._update_step(observ, action, old_distribution_params, reward, advantage, done, length),
         tf.range(self._config.update_epochs),
         [0., 0., ''], parallel_iterations=1)
     print_losses = tf.group(
@@ -372,7 +372,7 @@ class PPOAlgorithm(object):
       return summary[self._config.update_epochs // 2]
 
   def _update_step(
-      self, observ, action, old_distribution_params, reward, advantage, length):
+      self, observ, action, old_distribution_params, reward, advantage, done, length):
     """Compute the current combined loss and perform a gradient update step.
 
     Args:
@@ -387,7 +387,7 @@ class PPOAlgorithm(object):
     Returns:
       Tuple of value loss, policy loss, and summary tensor.
     """
-    value_loss, value_summary = self._value_loss(observ, reward, length)
+    value_loss, value_summary = self._value_loss(observ, reward, done, length)
     network = self._network(observ, length)
     policy_loss, policy_summary = self._policy_loss(network.distribution_params, old_distribution_params,
                                                     action, advantage, length)
@@ -412,11 +412,11 @@ class PPOAlgorithm(object):
     with tf.control_dependencies([optimize]):
       return [tf.identity(x) for x in (value_loss, policy_loss, summary)]
 
-  def _value_loss(self, observ, reward, length):
+  def _value_loss(self, observ, reward, done, length):
     """Compute the loss function for the value baseline.
 
     The value loss is the difference between empirical and approximated returns
-    over the collected episodes. Returns the loss tensor and a summary strin.
+    over the collected episodes. Returns the loss tensor and a summary string.
 
     Args:
       observ: Sequences of observations.
@@ -428,9 +428,8 @@ class PPOAlgorithm(object):
     """
     with tf.name_scope('value_loss'):
       value = self._network(observ, length).value
-      return_ = utility.discounted_return(
-          reward, length, self._config.discount)
-      advantage = return_ - value
+      return_ = utility.discounted_return_multi_episodes(reward, value, done, self._config.discount)
+      advantage = return_ - value  # TODO(blazej) - why do we compute this again?
       value_loss = self._config.value_loss_coeff*0.5 * self._mask(advantage ** 2, length)
       summary = tf.summary.merge([
           tf.summary.histogram('value_loss', value_loss),

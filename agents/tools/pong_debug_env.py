@@ -122,7 +122,7 @@ class DebugPong(Wrapper):
     self._buffer_states.append(state_obs)
 
   def _reset(self, **kwargs):
-    print("Reset in the environment")
+    #print("Reset in the environment")
     self._number_of_steps = self._max_number_of_steps
     self.env.reset()
     self._update_buffers()

@@ -78,7 +78,7 @@ def simulate(batch_env, algo, log=True, reset=False):
     agent_indices = tf.range(len(batch_env))
     action, step_summary = algo.perform(agent_indices, prevob)
     action.set_shape(batch_env.action.shape)
-    action = tf.Print(action, [action], "action=", summarize=30)
+    #action = tf.Print(action, [action], "action=", summarize=30)
 
     with tf.control_dependencies([batch_env.simulate(action)]):
       add_score = score.assign_add(batch_env.reward)
@@ -87,7 +87,7 @@ def simulate(batch_env, algo, log=True, reset=False):
       agent_indices = tf.range(len(batch_env))
       experience_summary = algo.experience(
           agent_indices, prevob, batch_env.action, batch_env.reward,
-          batch_env.done, batch_env.observ)
+          tf.cast(batch_env.done, dtype=tf.int32), batch_env.observ)
     return tf.summary.merge([step_summary, experience_summary])
 
   def _define_end_episode(agent_indices):
@@ -143,8 +143,8 @@ def simulate(batch_env, algo, log=True, reset=False):
       step = _define_step()
     with tf.control_dependencies([step]):
       agent_indices = tf.range(len(batch_env)) # tf.cast(tf.where(batch_env.done)[:, 0], tf.int32)
-      agent_indices = tf.Print(agent_indices, [tf.shape(agent_indices), tf.cast(tf.shape(agent_indices)[0], tf.bool)],
-                               "agent_indices shape=")
+      # agent_indices = tf.Print(agent_indices, [tf.shape(agent_indices), tf.cast(tf.shape(agent_indices)[0], tf.bool)],
+      #                          "agent_indices shape=")
 
       end_episode = tf.cond(
           tf.cast(tf.shape(agent_indices)[0], tf.bool),
