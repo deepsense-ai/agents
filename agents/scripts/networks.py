@@ -22,6 +22,7 @@ import functools
 import operator
 
 import agents
+import gym
 import numpy as np
 import tensorflow as tf
 
@@ -63,7 +64,7 @@ def _custom_diag_normal_kl(lhs, rhs, name=None):  # pylint: disable=unused-argum
 
 
 def feed_forward_gaussian(
-    config, action_size, observations, unused_length, state=None):
+    config, action_space, observations, unused_length, state=None):
   """Independent feed forward networks for policy and value.
 
   The policy network outputs the mean action and the standard deviation is
@@ -79,6 +80,8 @@ def feed_forward_gaussian(
   Returns:
     Attribute dictionary containing the policy, value, and unused state.
   """
+  assert isinstance(action_space, gym.spaces.Box), "Expecting continuous actions"
+  action_size = action_space.shape[0]
   mean_weights_initializer = tf.contrib.layers.variance_scaling_initializer(
       factor=config.init_mean_factor)
   before_softplus_std_initializer = tf.constant_initializer(
@@ -111,8 +114,42 @@ def feed_forward_gaussian(
   return agents.tools.AttrDict(policy=policy, value=value, state=state)
 
 
+def feed_forward_categorical(
+    config, action_space, observations, unused_length, state=None):
+  """Independent feed forward networks for policy and value.
+  The policy network outputs the mean action and the log standard deviation
+  is learned as independent parameter vector.
+  Args:
+    config: Configuration object.
+    action_size: Length of the action vector.
+    observations: Sequences of observations.
+    unused_length: Batch of sequence lengths.
+    state: Batch of initial recurrent states.
+  Returns:
+    Attribute dictionary containing the policy, value, and unused state.
+  """
+  assert isinstance(action_space, gym.spaces.Discrete), "Expecting discrete actions"
+  flat_observations = tf.reshape(observations, [
+      tf.shape(observations)[0], tf.shape(observations)[1],
+      functools.reduce(operator.mul, observations.shape.as_list()[2:], 1)])
+  with tf.variable_scope('policy'):
+    x = flat_observations
+    for size in config.policy_layers:
+      x = tf.contrib.layers.fully_connected(x, size, tf.nn.relu)
+    logits = tf.contrib.layers.fully_connected(x, action_space.n, activation_fn=None)
+
+  with tf.variable_scope('value'):
+    x = flat_observations
+    for size in config.value_layers:
+        x = tf.contrib.layers.fully_connected(x, size, tf.nn.relu)
+    value = tf.contrib.layers.fully_connected(x, 1, None)[..., 0]
+
+  policy = tfd.Categorical(logits=logits)
+
+  return agents.tools.AttrDict(policy=policy, value=value, state=state)
+
 def recurrent_gaussian(
-    config, action_size, observations, length, state=None):
+    config, action_space, observations, length, state=None):
   """Independent recurrent policy and feed forward value networks.
 
   The policy network outputs the mean action and the standard deviation is
@@ -129,6 +166,8 @@ def recurrent_gaussian(
   Returns:
     Attribute dictionary containing the policy, value, and state.
   """
+  assert isinstance(action_space, gym.spaces.Box), "Expecting continuous actions"
+  action_size = action_space.shape[0]
   mean_weights_initializer = tf.contrib.layers.variance_scaling_initializer(
       factor=config.init_mean_factor)
   before_softplus_std_initializer = tf.constant_initializer(
