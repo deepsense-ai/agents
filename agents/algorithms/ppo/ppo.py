@@ -527,8 +527,8 @@ class PPO(object):
           lambda x: isinstance(x, tf.Tensor), old_policy.parameters)
       assert_change = tf.assert_equal(
           tf.reduce_all(
-              tools.nested.map(lambda x: tf.equal(x[0], x[1]),
-                               tools.nested.zip([policy_params, old_policy_params]),
+              tools.nested.map(lambda x, y: tf.equal(x, y),
+                               policy_params, old_policy_params,
                                flatten=True)
           ),
           False, message='policy should change')

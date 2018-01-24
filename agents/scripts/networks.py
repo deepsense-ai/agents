@@ -72,7 +72,7 @@ def feed_forward_gaussian(
 
   Args:
     config: Configuration object.
-    action_size: Length of the action vector.
+    action_space: Value of environment's action_space.
     observations: Sequences of observations.
     unused_length: Batch of sequence lengths.
     state: Unused batch of initial states.
@@ -121,7 +121,7 @@ def feed_forward_categorical(
   is learned as independent parameter vector.
   Args:
     config: Configuration object.
-    action_size: Length of the action vector.
+    action_space: Value of environment's action_space.
     observations: Sequences of observations.
     unused_length: Batch of sequence lengths.
     state: Batch of initial recurrent states.
@@ -158,7 +158,7 @@ def recurrent_gaussian(
 
   Args:
     config: Configuration object.
-    action_size: Length of the action vector.
+    action_space: Value of environment's action_space.
     observations: Sequences of observations.
     length: Batch of sequence lengths.
     state: Batch of initial recurrent states.
