@@ -72,7 +72,7 @@ def feed_forward_gaussian(
 
   Args:
     config: Configuration object.
-    action_space: Value of environment's action_space.
+    action_space: Action space of the environment.
     observations: Sequences of observations.
     unused_length: Batch of sequence lengths.
     state: Unused batch of initial states.
@@ -80,7 +80,8 @@ def feed_forward_gaussian(
   Returns:
     Attribute dictionary containing the policy, value, and unused state.
   """
-  assert isinstance(action_space, gym.spaces.Box), "Expecting continuous actions"
+  assert isinstance(action_space, gym.spaces.Box), 'Expecting continuous actions.'
+  assert len(action_space.shape) == 1, 'Network only supports vector-shaped actions.'
   action_size = action_space.shape[0]
   mean_weights_initializer = tf.contrib.layers.variance_scaling_initializer(
       factor=config.init_mean_factor)
@@ -117,18 +118,21 @@ def feed_forward_gaussian(
 def feed_forward_categorical(
     config, action_space, observations, unused_length, state=None):
   """Independent feed forward networks for policy and value.
+
   The policy network outputs the mean action and the log standard deviation
   is learned as independent parameter vector.
+
   Args:
     config: Configuration object.
-    action_space: Value of environment's action_space.
+    action_space: Action space of the environment.
     observations: Sequences of observations.
     unused_length: Batch of sequence lengths.
-    state: Batch of initial recurrent states.
+    state: Unused batch of initial recurrent states.
+
   Returns:
     Attribute dictionary containing the policy, value, and unused state.
   """
-  assert isinstance(action_space, gym.spaces.Discrete), "Expecting discrete actions"
+  assert isinstance(action_space, gym.spaces.Discrete), 'Expecting discrete actions.'
   flat_observations = tf.reshape(observations, [
       tf.shape(observations)[0], tf.shape(observations)[1],
       functools.reduce(operator.mul, observations.shape.as_list()[2:], 1)])
@@ -137,15 +141,12 @@ def feed_forward_categorical(
     for size in config.policy_layers:
       x = tf.contrib.layers.fully_connected(x, size, tf.nn.relu)
     logits = tf.contrib.layers.fully_connected(x, action_space.n, activation_fn=None)
-
   with tf.variable_scope('value'):
     x = flat_observations
     for size in config.value_layers:
         x = tf.contrib.layers.fully_connected(x, size, tf.nn.relu)
     value = tf.contrib.layers.fully_connected(x, 1, None)[..., 0]
-
   policy = tfd.Categorical(logits=logits)
-
   return agents.tools.AttrDict(policy=policy, value=value, state=state)
 
 def recurrent_gaussian(
@@ -158,7 +159,7 @@ def recurrent_gaussian(
 
   Args:
     config: Configuration object.
-    action_space: Value of environment's action_space.
+    action_space: Action space of the environment.
     observations: Sequences of observations.
     length: Batch of sequence lengths.
     state: Batch of initial recurrent states.
@@ -166,7 +167,8 @@ def recurrent_gaussian(
   Returns:
     Attribute dictionary containing the policy, value, and state.
   """
-  assert isinstance(action_space, gym.spaces.Box), "Expecting continuous actions"
+  assert isinstance(action_space, gym.spaces.Box), 'Expecting continuous actions.'
+  assert len(action_space.shape) == 1, 'Network only supports vector-shaped actions.'
   action_size = action_space.shape[0]
   mean_weights_initializer = tf.contrib.layers.variance_scaling_initializer(
       factor=config.init_mean_factor)

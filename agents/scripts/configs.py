@@ -129,6 +129,7 @@ def humanoid():
   update_every = 60
   return locals()
 
+
 def cartpole():
   """Configuration for the Cart Pole classic control task."""
   locals().update(default())
@@ -138,3 +139,4 @@ def cartpole():
   steps = 2e6  # 2M
   network = networks.feed_forward_categorical
   return locals()
+

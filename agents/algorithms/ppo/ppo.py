@@ -521,19 +521,8 @@ class PPO(object):
     old_policy = old_policy.copy()  # Work around TensorFlow frame error.
     with tf.name_scope('adjust_penalty'):
       network = self._network(observ, length)
-      policy_params = tools.nested.filter(
-          lambda x: isinstance(x, tf.Tensor), network.policy.parameters)
-      old_policy_params = tools.nested.filter(
-          lambda x: isinstance(x, tf.Tensor), old_policy.parameters)
-      assert_change = tf.assert_equal(
-          tf.reduce_all(
-              tools.nested.map(lambda x, y: tf.equal(x, y),
-                               policy_params, old_policy_params,
-                               flatten=True)
-          ),
-          False, message='policy should change')
       print_penalty = tf.Print(0, [self._penalty], 'current penalty: ')
-      with tf.control_dependencies([assert_change, print_penalty]):
+      with tf.control_dependencies([print_penalty]):
         kl_change = tf.reduce_mean(self._mask(
             tf.contrib.distributions.kl_divergence(old_policy, network.policy),
             length))
