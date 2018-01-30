@@ -139,4 +139,3 @@ def cartpole():
   steps = 2e6  # 2M
   network = networks.feed_forward_categorical
   return locals()
-

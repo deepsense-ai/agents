@@ -144,7 +144,7 @@ def feed_forward_categorical(
   with tf.variable_scope('value'):
     x = flat_observations
     for size in config.value_layers:
-        x = tf.contrib.layers.fully_connected(x, size, tf.nn.relu)
+      x = tf.contrib.layers.fully_connected(x, size, tf.nn.relu)
     value = tf.contrib.layers.fully_connected(x, 1, None)[..., 0]
   policy = tfd.Categorical(logits=logits)
   return agents.tools.AttrDict(policy=policy, value=value, state=state)
