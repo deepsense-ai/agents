@@ -61,7 +61,21 @@ def pendulum():
   # Environment
   env = 'Pendulum-v0'
   max_length = 200
+  steps = 1e6  # 1M
+  # Optimization
+  batch_size = 20
+  chunk_length = 50
+  return locals()
+
+
+def cartpole():
+  """Configuration for the cart pole classic control task."""
+  locals().update(default())
+  # Environment
+  env = 'CartPole-v0'
+  max_length = 200
   steps = 2e6  # 2M
+  network = networks.feed_forward_categorical
   return locals()
 
 
@@ -130,12 +144,12 @@ def humanoid():
   return locals()
 
 
-def cartpole():
-  """Configuration for the Cart Pole classic control task."""
+def bullet_ant():
+  """Configuration for PyBullet's ant task."""
   locals().update(default())
   # Environment
-  env = 'CartPole-v0'
-  max_length = 200
-  steps = 2e6  # 2M
-  network = networks.feed_forward_categorical
-  return locals()
+  import pybullet_envs  # noqa pylint: disable=unused-import
+  env = 'AntBulletEnv-v0'
+  max_length = 1000
+  steps = 3e7  # 30M
+  update_every = 60
